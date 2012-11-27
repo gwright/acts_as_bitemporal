@@ -8,8 +8,8 @@ Gem::Specification.new do |gem|
   gem.version       = ActsAsBitemporal::VERSION
   gem.authors       = ["Gary Wright"]
   gem.email         = ["gary.r.wright@mac.com"]
-  gem.description   = %q{TODO: Write a gem description}
-  gem.summary       = %q{TODO: Write a gem summary}
+  gem.description   = %q{Bitemporal versioning of Active Record models}
+  gem.summary       = %q{Bitemporal versioning of Active Record models}
   gem.homepage      = ""
 
   gem.files         = `git ls-files`.split($/)
