@@ -1,0 +1,17 @@
+sqlite3: 
+  adapter: sqlite3 
+  database: ":memory:"
+postgresql: 
+  adapter: postgresql
+  database: aabt_test
+  host: localhost
+  user: igendum
+  pool: 5
+  timeout: 5000
+  min_messages: WARNING
+mysql: 
+  adapter: mysql 
+  host: localhost 
+  database: aabt_test
+  username: aabt
+  password: aabt

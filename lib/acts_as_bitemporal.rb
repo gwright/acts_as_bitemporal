@@ -1,6 +1,7 @@
 # encoding: utf-8
 require "acts_as_bitemporal/version"
 require 'active_support'
+require 'active_support/time'
 require 'active_record'
 
 module ActsAsBitemporal
@@ -40,7 +41,7 @@ module ActsAsBitemporal
   end
 
   # The timestamp used to signify an indefinite end of a time period.
-  Forever = DateTime.parse("9999-12-31T23:59:59.999999+00:00")
+  Forever = Time.zone.parse("9999-12-31")
 
   # Does the transaction time overlap 'as_of'?
   def tt_cover?(as_of)
@@ -87,7 +88,9 @@ module ActsAsBitemporal
 
         # Record current fields for the preceeding span.
         self.class.bt_new(bt_attributes_without_timestamps.merge(vtstart_at: vtstart_at, vtend_at: commit_time, ttstart_at: commit_time, ttend_at: ActsAsBitemporal::Forever)).save!
-
+      else
+        #raise [self.ttend_at, Forever].map { |x| x.strftime("%c %9N") }.inspect
+        raise (self.ttend_at - Forever).inspect
       end
 
       # Adjust records scheduled in future that intersect valid period.
@@ -187,10 +190,10 @@ module ActsAsBitemporal
 
   module TableDefinitionHelper
     def bt_timestamps(options={})
-      column(:vtstart_at, :datetime, options)
-      column(:vtend_at, :datetime, options)
-      column(:ttstart_at, :datetime, options)
-      column(:ttend_at, :datetime, options)
+      column(:vtstart_at, :timestamp, options)
+      column(:vtend_at, :timestamp, options)
+      column(:ttstart_at, :timestamp, options)
+      column(:ttend_at, :timestamp, options)
     end
   end
 
@@ -206,11 +209,15 @@ class << ActiveRecord::Base
 
     include ActsAsBitemporal
 
-    raise ArgumentError, "must specify :for option" unless bt_belongs_to = options[:for]
-
     class_attribute :bt_key_attrs
     class_attribute :bt_versioned_attrs
-    self.bt_key_attrs = [bt_belongs_to.foreign_key]     # Entity => entity_id
+
+    if bt_belongs_to = options.delete(:for)
+      self.bt_key_attrs = [bt_belongs_to.foreign_key]     # Entity => entity_id
+    else
+      self.bt_key_attrs = self.column_names.grep /_id/
+    end
+
     self.bt_versioned_attrs = self.column_names - ActsAsBitemporal::TemporalColumnNames - bt_key_attrs - ["id"]
   end
 end

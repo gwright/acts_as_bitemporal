@@ -9,3 +9,8 @@ Rake::TestTask.new do |t|
   t.pattern = 'test/**/*_test.rb'
   t.verbose = true
 end
+
+
+task :irb do
+  system "irb -Ilib -Itest -racts_as_bitemporal -rtest_helper"
+end
