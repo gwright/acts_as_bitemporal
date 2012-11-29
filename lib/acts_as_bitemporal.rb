@@ -196,7 +196,7 @@ module ActsAsBitemporal
     def arel_intersect(start_column, end_column, start_or_instant, range_end=nil)
       table = self.arel_table
       if range_end
-        table[start_column].lt(range_end).and(table[end_column].gteq(start_or_instant))
+        table[start_column].lt(range_end).and(table[end_column].gt(start_or_instant))
       else
         table[start_column].lteq(start_or_instant).and(table[end_column].gt(start_or_instant))
       end
