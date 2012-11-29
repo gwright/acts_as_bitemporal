@@ -4,7 +4,7 @@ require 'active_support/time'
 require 'test/unit'
 require 'shoulda-context'
 
-Time.zone = 0   # Force to UTC
+Time.zone = "UTC"   # Force to UTC
 
 # this is to make absolutely sure we test this one, not the one
 # installed on the system.
