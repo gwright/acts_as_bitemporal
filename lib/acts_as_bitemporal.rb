@@ -122,11 +122,11 @@ module ActsAsBitemporal
 
     ActiveRecord::Base.transaction do
       if tt_forever? and vt_intersects?(commit_time)
-        # close the transaction span for existing record
+        # close the transaction period for existing record
         update_column(:ttend_at, commit_time)
 
-        # New data splits the existing valid_time span.
-        # Record new data for the remaining span.
+        # New data splits the existing valid_time period.
+        # Record new data for the remaining period.
         new_record = self.class.new(
           bt_attributes_merge(new_attrs).
           merge(vtstart_at: commit_time,
@@ -136,7 +136,7 @@ module ActsAsBitemporal
         )
         new_record.save!
 
-        # Record current fields for the preceeding span.
+        # Record current fields for the preceeding period.
         self.class.new(
           bt_nontemporal_attributes.merge(
             vtstart_at: vtstart_at,
