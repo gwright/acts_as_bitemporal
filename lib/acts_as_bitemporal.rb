@@ -181,10 +181,10 @@ module ActsAsBitemporal
 
   # Returns attribute hash merged with other hash. Temporal attributes are excluded.
   #   bt_attributes_merge(column: "new value")   # => Hash
-  def bt_attributes_merge()
-    new_attrs = new_attrs.stringify_keys
+  def bt_attributes_merge(updates)
+    updates = updates.stringify_keys
 
-    bt_nontemporal_attributes.merge( new_attrs.slice(*self.class.bt_versioned_columns) )
+    bt_nontemporal_attributes.merge( updates.slice(*self.class.bt_versioned_columns) )
   end
 
   module ClassMethods
