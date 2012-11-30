@@ -25,6 +25,7 @@ class ActsAsBitemporalTestDatabase
   end
 
   def self.with_model options = {}
+    options           = options.dup
     extra_columns     = options.delete(:extra_columns) || []
     model_name        = options.delete(:model_name) || "BtRec"
 

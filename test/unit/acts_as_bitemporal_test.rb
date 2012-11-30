@@ -3,7 +3,47 @@
 require 'test_helper'
 
 class ActsAsBitemporalTest < ActiveSupport::TestCase
+  ARange = ActsAsBitemporal::ARange
   Forever = ActsAsBitemporal::Forever
+  EntityOptions = {:extra_columns => {:entity_id => :integer, :name => :string }}.freeze
+
+  def test_new_with_no_conflicts
+    base_date = Time.zone.today
+    ActsAsBitemporalTestDatabase.with_model(EntityOptions) do |bt_model|
+      instance = bt_model.create!(entity_id: 100, name: "one", vtstart_at: base_date, vtend_at: base_date + 1)
+      assert_equal instance.vt_range, ARange[base_date, base_date + 1]
+    end
+  end
+
+  def test_new_with_conflicts
+    base_date = Time.zone.today
+    ActsAsBitemporalTestDatabase.with_model(EntityOptions) do |bt_model|
+      instance = bt_model.create!(entity_id: 100, name: "one", vtstart_at: base_date, vtend_at: base_date + 1)
+      assert_raises(ActiveRecord::RecordInvalid) { 
+        bt_model.create!(entity_id: 100, name: "two", vtstart_at: base_date, vtend_at: base_date + 1) 
+      }
+      instance2 = bt_model.create!(entity_id: 100, name: "two", vtstart_at: base_date + 1, vtend_at: base_date + 2)
+      assert_equal instance2.vt_range, ARange[base_date + 1, base_date + 2]
+      assert_equal 2, instance.bt_versions.count
+    end
+  end
+
+  def test_vt_revise
+    base_date = Time.zone.now
+    ActsAsBitemporalTestDatabase.with_model(EntityOptions) do |bt_model|
+
+      # Create two records with disjoint valid periods.
+      instance = bt_model.create!(entity_id: 100, name: "one", vtstart_at: base_date, vtend_at: base_date + 1.day)
+      instance2 = bt_model.create!(entity_id: 100, name: "two", vtstart_at: base_date + 1.day, vtend_at: base_date + 2.day)
+
+      # Revise the second record to extends its valid period.
+      revision = instance2.vt_revise(base_date + 1.day, base_date + 3.day)
+      assert_equal 3, instance.bt_versions.count
+
+      assert_equal ARange[base_date + 1.day, base_date + 3.day], revision.vt_range,                   "new record has updated valid period"
+      assert_equal ARange[instance2.ttstart_at, revision.ttstart_at], instance2.tt_range,     "old record has revised ttend"
+    end
+  end
 
   def with_one_record(options={})
     entity_options = {:extra_columns => {:entity_id => :integer, :name => :string }}
@@ -98,8 +138,6 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     assert_equal transaction_time,              revised.ttstart_at,       "must start at transaction time"
     assert       revised.tt_forever?,                                     "forever valid end"
   end
-
-
 
   def test_bt_delete_no_future_records
 

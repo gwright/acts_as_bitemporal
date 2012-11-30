@@ -22,12 +22,14 @@ module ActsAsBitemporal
     before_validation :complete_bt_timestamps
     validate          :bt_scope_constraint
   end
+  
+  def bt_scope_constraint_violation?
+    bt_versions.vt_intersect(vtstart_at, vtend_at).tt_intersect(ttstart_at).exists?
+  end
 
   # The new record can not have a valid time period that overlaps with any existing record for the same entity.
   def bt_scope_constraint
-    if bt_versions.
-      vt_intersect(vtstart_at, vtend_at).
-      tt_intersect(ttstart_at).exists?
+    if bt_scope_constraint_violation?
       errors[:base] << "overlaps existing valid record"
     end
   end
@@ -127,6 +129,7 @@ module ActsAsBitemporal
   end
 
   # Mark the current record as deleted.
+  # XXX ASSUMPTION: The record is bt_current.
   #   1) current record marked as deleted by:
   #     A) terminating the transaction period
   #     B) inserting new transaction with truncated valid time.
@@ -140,7 +143,7 @@ module ActsAsBitemporal
       update_column(:ttend_at, commit_time)
 
       # Record revised valid period.
-      self.class.create(attributes.merge(
+      self.class.create(bt_nontemporal_attributes.merge(
           vtstart_at: vtstart_at,
           vtend_at: commit_time,
           ttstart_at: commit_time,
@@ -183,6 +186,21 @@ module ActsAsBitemporal
     end
 
     new_record
+  end
+
+  def vt_revise(newstart, newend)
+    return self if vt_range.covers?(newstart.to_time, newend.to_time)
+
+    ActiveRecord::Base.transaction do
+      commit_time = Time.zone.now
+      if bt_scope_constraint_violation?
+        update_column(:ttend_at, commit_time)
+        new_period = vt_range.merge(newstart, newend)
+        self.class.create(bt_nontemporal_attributes.merge(vtstart_at: new_period.begin, vtend_at: new_period.end, ttstart_at: commit_time))
+      else
+        self.class.create(bt_nontemporal_attributes.merge(vtstart_at: newstart, vtend_at: newend))
+      end
+    end
   end
 
   # Returns hash of the four temporal attributes.
@@ -360,6 +378,7 @@ end
 class << ActiveRecord::Base
   def acts_as_bitemporal(*args)
     options = args.extract_options!
+    bt_exclude_columns = %w{id type}    # AR maintains these columns
 
     include ActsAsBitemporal
 
@@ -374,6 +393,6 @@ class << ActiveRecord::Base
       self.bt_scope_columns = self.column_names.grep /_id/
     end
 
-    self.bt_versioned_columns = self.column_names - ActsAsBitemporal::TemporalColumnNames - bt_scope_columns
+    self.bt_versioned_columns = self.column_names - bt_scope_columns - ActsAsBitemporal::TemporalColumnNames - bt_exclude_columns
   end
 end
