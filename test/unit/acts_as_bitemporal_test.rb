@@ -3,6 +3,7 @@
 require 'test_helper'
 
 class ActsAsBitemporalTest < ActiveSupport::TestCase
+  Forever = ActsAsBitemporal::Forever
 
   def with_one_record(options={})
     entity_options = {:extra_columns => {:entity_id => :integer, :name => :string }}
@@ -15,7 +16,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
 
   def new_record_assertions(record, now_time=Time.zone.now, transaction_time=nil)
     # Test valid time 
-    assert_equal ActsAsBitemporal::Forever, record.vtend_at,                    "should be valid forever"
+    assert_equal Forever, record.vtend_at,                                     "should be valid forever"
     assert (record.vtstart_at...(record.vtend_at)).cover?(now_time),           "should be valid now"
     refute (record.vtstart_at...(record.vtend_at)).cover?(now_time - 24*60*60),"should not be valid yesterday"
 
@@ -24,7 +25,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     assert record.vt_intersects?(now_time)
 
     # Test transaction time
-    assert_equal record.ttend_at, ActsAsBitemporal::Forever
+    assert_equal record.ttend_at, Forever
     assert (record.ttstart_at...(record.ttend_at)).cover?(now_time)
 
     # Test transaction time covenience methods
@@ -65,7 +66,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
       original_attrs = first.attributes
 
       first.name = new_name = "Second"
-      first.save
+      first.bt_save
 
       update_record_assertions(bt_model, original_attrs, first.ttend_at, name: [original_attrs[:name], new_name])
     end
@@ -97,5 +98,45 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     assert_equal transaction_time,              revised.ttstart_at,       "must start at transaction time"
     assert       revised.tt_forever?,                                     "forever valid end"
   end
+
+
+  # Deleting the current record should result in:
+  #   1) current record should be deleted by:
+  #     A) terminating the transaction period
+  #     B) inserting new transaction with truncated valid time.
+  #   2) future records should be deleted by:
+  #     A) terminating the transaction period
+
+  def test_bt_delete_no_future_records
+
+    before_time = Time.zone.now
+    with_one_record do |bt_model|
+      current_rec         = bt_model.first!
+      current_rec_before  = current_rec.attributes
+      transaction_time    = current_rec.bt_delete
+      after_time          = Time.zone.now
+
+      current_rec_after   = current_rec.reload
+
+      warn current_rec_before.inspect
+      assert_equal current_rec_before['vtstart_at'],  current_rec_after.vtstart_at,   "vtstart_at unchanged"
+      assert_equal current_rec_before['vtend_at'],    current_rec_after.vtend_at,     "vtend_at unchanged"
+      assert_equal current_rec_before['ttstart_at'],  current_rec_after.ttstart_at,   "ttstart_at unchanged"
+      assert_equal transaction_time,                  current_rec_after.ttend_at,     "ttend_at changed to transaction time"
+
+      versions = current_rec.bt_versions.reject { |r| r == current_rec }
+
+      assert_equal 1, versions.count,     "only one other version"
+
+      revised_record = versions.first
+
+      assert_equal current_rec_before['vtstart_at'],  revised_record.vtstart_at
+      assert_equal transaction_time,                  revised_record.vtend_at
+      assert_equal transaction_time,                  revised_record.ttstart_at
+      assert_equal Forever,                           revised_record.ttend_at
+
+    end
+  end
+
 end
 

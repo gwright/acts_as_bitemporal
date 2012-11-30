@@ -47,10 +47,12 @@ module ActsAsBitemporal
     end
   end
 
+  # Returns valid time period represented as an ActsAsBitemporal::Range.
   def vt_range
     ARange.new(vtstart_at, vtend_at)
   end
 
+  # Returns transaction time period represented as an ActsAsBitemporal::Range.
   def tt_range
     ARange.new(ttstart_at, ttend_at)
   end
@@ -90,16 +92,17 @@ module ActsAsBitemporal
     vt_forever? and tt_forever?
   end
 
-  # Returns true if the transaction period is valid now.
+  # Returns true if the transaction period covers the current time.
   def tt_current?
     tt_intersects?(Time.zone.now)
   end
 
-  # Returns true if the valid period is valid now.
+  # Returns true if the valid period covers the current time.
   def vt_current?
     vt_intersects?(Time.zone.now)
   end
 
+  # Returns true if the valid period and transaction period covers the current time.
   def bt_current?
     now = Time.zone.now
     vt_intersects?(now) and tt_intersects?(now)
@@ -107,11 +110,38 @@ module ActsAsBitemporal
 
 
   def complete_bt_timestamps
-      transaction_time = Time.zone.now
-      self.vtstart_at ||= transaction_time
-      self.ttstart_at ||= transaction_time
-      self.vtend_at ||= Forever
-      self.ttend_at ||= Forever
+    transaction_time = Time.zone.now
+    self.vtstart_at ||= transaction_time
+    self.ttstart_at ||= transaction_time
+    self.vtend_at ||= Forever
+    self.ttend_at ||= Forever
+  end
+
+  # Pushes changes to the database respecting bitemporal semantics.
+  def bt_save(*args)
+    if new_record?
+      save(*args)
+    else
+      bt_update_attributes( Hash[changes.map { |k,(oldv, newv)| [k,newv] }] )
+    end
+  end
+
+  def bt_delete(commit_time=nil)
+    ActiveRecord::Base.transaction do
+      commit_time ||= Time.zone.now
+
+      # Close the transaction period for existing record
+      update_column(:ttend_at, commit_time)
+
+      # Record revised valid period.
+      self.class.create(attributes.merge(
+          vtstart_at: vtstart_at,
+          vtend_at: commit_time,
+          ttstart_at: commit_time,
+          ttend_at: Forever)
+        )
+    end
+    commit_time
   end
 
   # Replace current version with new version.
@@ -122,37 +152,24 @@ module ActsAsBitemporal
 
     ActiveRecord::Base.transaction do
       if tt_forever? and vt_intersects?(commit_time)
-        # close the transaction period for existing record
-        update_column(:ttend_at, commit_time)
 
-        # New data splits the existing valid_time period.
+        # Revise current version as "deleted".
+        bt_delete(commit_time)
+
         # Record new data for the remaining period.
-        new_record = self.class.new(
+        new_record = self.class.create!(
           bt_attributes_merge(new_attrs).
           merge(vtstart_at: commit_time,
                 vtend_at: vtend_at,
                 ttstart_at: commit_time,
                 ttend_at: Forever)
         )
-        new_record.save!
-
-        # Record current fields for the preceeding period.
-        self.class.new(
-          bt_nontemporal_attributes.merge(
-            vtstart_at: vtstart_at,
-            vtend_at: commit_time,
-            ttstart_at: commit_time,
-            ttend_at: Forever)
-        ).save!
-      else
-        #raise [self.ttend_at, Forever].map { |x| x.strftime("%c %9N") }.inspect
-        raise (self.ttend_at - Forever).inspect
       end
 
-      # Adjust records scheduled in future that intersect valid period.
+      # Adjust records scheduled in future that intersect until-changed transaction period.
       bt_versions.tt_current.where(['vtstart_at > ?', commit_time]).each do |future_rec|
-        self.class.new(future_rec.bt_nontemporal_attributes.merge(ttstart_at: commit_time, ttend_at: Forever)).save!
         future_rec.update_column(:ttend_at, commit_time)
+        self.class.new(future_rec.bt_nontemporal_attributes.merge(ttstart_at: commit_time, ttend_at: Forever)).save!
       end
     end
 
@@ -255,7 +272,7 @@ module ActsAsBitemporal
           vt_intersect(instant).tt_intersect(instant)
         end
       when 2
-          vt_intersect(args.at(0)).tt_intersect(args_at(1))
+        vt_intersect(args.at(0)).tt_intersect(args_at(1))
       when 4
         where(arel_bt_intersect(*args))
       end
@@ -279,6 +296,14 @@ module ActsAsBitemporal
 
     def bt_current!
       bt_current.first!
+    end
+
+    def vt_forever
+      where(:vtend_at => Forever)
+    end
+
+    def tt_forever
+      where(:ttend_at => Forever)
     end
 
     # Verify bitemporal key constraints
