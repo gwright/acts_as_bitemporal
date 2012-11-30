@@ -41,6 +41,14 @@ class ActsAsBitemporalRangeTest < ActiveSupport::TestCase
     end
   end
 
+  def test_with_integer_range_two_args
+    first_range = ARange.new(1,4)
+    RangeCases.each do |expected, b, e|
+      assert_equal expected, first_range.intersects?(b, e), "1...4 vs #{b}...#{e}"
+      assert_equal !expected, first_range.disjoint?(b, e), "1...4 vs #{b}...#{e}"
+    end
+  end
+
   def test_with_date_arange
     base_date = Time.zone.now
     d1_range = ARange.new((base_date+1), (base_date+4))
@@ -89,4 +97,21 @@ class ActsAsBitemporalRangeTest < ActiveSupport::TestCase
       ARange.new(1,4).intersects?(true)
     end
   end
+
+  def test_convenience_construction
+    assert_equal ARange.new(1,4), ARange[1,4]
+  end
+
+  CoverCases = [
+    [true, 1, 2, 1, 2],
+  ]
+
+  def test_cover
+    CoverCases.each do |expected, a_start, a_end, b_start, b_end|
+      assert_equal expected, ARange[a_start, a_end].covers?(b_start, b_end)
+      assert_equal expected, ARange[a_start, a_end].covers?(ARange[b_start, b_end])
+      assert_equal expected, ARange[a_start, a_end].covers?(b_start...b_end)
+    end
+  end
+
 end
