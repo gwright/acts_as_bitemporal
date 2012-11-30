@@ -100,12 +100,6 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
   end
 
 
-  # Deleting the current record should result in:
-  #   1) current record should be deleted by:
-  #     A) terminating the transaction period
-  #     B) inserting new transaction with truncated valid time.
-  #   2) future records should be deleted by:
-  #     A) terminating the transaction period
 
   def test_bt_delete_no_future_records
 
@@ -136,6 +130,10 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
       assert_equal Forever,                           revised_record.ttend_at
 
     end
+  end
+
+  def test_bt_delete_with_future_records
+    skip("not implemented")
   end
 
 end
