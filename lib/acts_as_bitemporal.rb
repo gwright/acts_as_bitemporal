@@ -123,8 +123,12 @@ module ActsAsBitemporal
   def bt_save(*args)
     if new_record?
       save(*args)
+    elsif vtstart_at_changed? or vtend_at_changed?
+      vt_revise(vtstart_at: vtstart_at, vtend_at: vtend_at)
     else
+      #save(*args)
       bt_update_attributes( Hash[changes.map { |k,(oldv, newv)| [k,newv] }] )
+      #
     end
   end
 
@@ -158,6 +162,7 @@ module ActsAsBitemporal
 
   # Replace current version with new version.
   def bt_update_attributes(new_attrs)
+    #return vt_revise(new_attrs)
     commit_time = Time.zone.now
 
     new_record = nil
@@ -188,17 +193,22 @@ module ActsAsBitemporal
     new_record
   end
 
-  def vt_revise(newstart, newend)
-    return self if vt_range.covers?(newstart.to_time, newend.to_time)
+  def vt_revise(attrs)
+    revised_attrs = attrs.dup
+    newstart  = (revised_attrs.delete(:vtstart_at) || vtstart_at).try(:to_time)
+    newend    = (revised_attrs.delete(:vtend_at) || vtend_at).try(:to_time)
+    return self if vt_range.covers?(newstart, newend) and revised_attrs.empty?
+
+    revised_attrs = bt_nontemporal_attributes.merge!(revised_attrs)
 
     ActiveRecord::Base.transaction do
       commit_time = Time.zone.now
       if bt_scope_constraint_violation?
         update_column(:ttend_at, commit_time)
         new_period = vt_range.merge(newstart, newend)
-        self.class.create(bt_nontemporal_attributes.merge(vtstart_at: new_period.begin, vtend_at: new_period.end, ttstart_at: commit_time))
+        self.class.create(revised_attrs.merge(vtstart_at: new_period.begin, vtend_at: new_period.end, ttstart_at: commit_time))
       else
-        self.class.create(bt_nontemporal_attributes.merge(vtstart_at: newstart, vtend_at: newend))
+        self.class.create(revised_attrs.merge(vtstart_at: newstart, vtend_at: newend))
       end
     end
   end

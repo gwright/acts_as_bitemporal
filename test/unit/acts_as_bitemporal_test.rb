@@ -7,7 +7,16 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
   Forever = ActsAsBitemporal::Forever
   EntityOptions = {:extra_columns => {:entity_id => :integer, :name => :string }}.freeze
 
-  def test_new_with_no_conflicts
+  def with_one_record(options={})
+    entity_options = {:extra_columns => {:entity_id => :integer, :name => :string }}
+    ActsAsBitemporalTestDatabase.with_model(options.reverse_merge(entity_options)) do |bt_model|
+      key_attributes = {entity_id: 100, name: "First"}
+      bt_model.new(key_attributes).save!
+      yield bt_model
+    end
+  end
+
+  def test_new_with_no_scope_conflicts
     base_date = Time.zone.today
     ActsAsBitemporalTestDatabase.with_model(EntityOptions) do |bt_model|
       instance = bt_model.create!(entity_id: 100, name: "one", vtstart_at: base_date, vtend_at: base_date + 1)
@@ -19,12 +28,36 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     base_date = Time.zone.today
     ActsAsBitemporalTestDatabase.with_model(EntityOptions) do |bt_model|
       instance = bt_model.create!(entity_id: 100, name: "one", vtstart_at: base_date, vtend_at: base_date + 1)
+
       assert_raises(ActiveRecord::RecordInvalid) { 
+        # Attempt to create a valid period conflict for the defined scope.
         bt_model.create!(entity_id: 100, name: "two", vtstart_at: base_date, vtend_at: base_date + 1) 
       }
+
+      # This record doesn't conflict with the existing valid time periods.
       instance2 = bt_model.create!(entity_id: 100, name: "two", vtstart_at: base_date + 1, vtend_at: base_date + 2)
       assert_equal instance2.vt_range, ARange[base_date + 1, base_date + 2]
       assert_equal 2, instance.bt_versions.count
+    end
+  end
+
+  def test_create_with_no_scope_conflict
+    ActsAsBitemporalTestDatabase.with_model(:extra_columns => {:entity_id => :integer }) do |bt_model|
+      record = bt_model.create!(entity_id: 1000)
+      new_record_assertions(record, Time.zone.now)
+    end
+  end
+
+  def x_test_bt_save_with_temporal_changes
+    ActsAsBitemporalTestDatabase.with_model(:extra_columns => {:entity_id => :integer }) do |bt_model|
+      record = bt_model.create!(entity_id: 1000)
+
+      record.vtstart_at   = new_start = Time.zone.now - 1.day
+      record.vtstart_at   = new_end   = Time.zone.now + 1.day
+
+      refute_nil(revision = record.bt_save, "bt_save succeeded")
+      assert_equal ARange[record.ttstart_at, revision.ttstart_at], record.tt_range,     "old record transaction is closed"
+      assert_equal ARange[new_start, new_end], revision.vt_range,                       "new record has temporal changes"
     end
   end
 
@@ -37,7 +70,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
       instance2 = bt_model.create!(entity_id: 100, name: "two", vtstart_at: base_date + 1.day, vtend_at: base_date + 2.day)
 
       # Revise the second record to extends its valid period.
-      revision = instance2.vt_revise(base_date + 1.day, base_date + 3.day)
+      revision = instance2.vt_revise(vtstart_at: base_date + 1.day, vtend_at: base_date + 3.day)
       assert_equal 3, instance.bt_versions.count
 
       assert_equal ARange[base_date + 1.day, base_date + 3.day], revision.vt_range,                   "new record has updated valid period"
@@ -45,14 +78,26 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     end
   end
 
-  def with_one_record(options={})
-    entity_options = {:extra_columns => {:entity_id => :integer, :name => :string }}
-    ActsAsBitemporalTestDatabase.with_model(options.reverse_merge(entity_options)) do |bt_model|
-      key_attributes = {entity_id: 100, name: "First"}
-      bt_model.new(key_attributes).save!
-      yield bt_model
+  def test_vt_revise_with_non_temporal_changes
+    base_date = Time.zone.now
+    ActsAsBitemporalTestDatabase.with_model(EntityOptions) do |bt_model|
+
+      # Create two records with disjoint valid periods.
+      instance = bt_model.create!(entity_id: 100, name: "one", vtstart_at: base_date, vtend_at: base_date + 1.day)
+      instance2 = bt_model.create!(entity_id: 100, name: "two", vtstart_at: base_date + 1.day, vtend_at: base_date + 2.day)
+
+      # Revise the second record to extends its valid period and change its name.
+      revision = instance2.vt_revise(vtstart_at: base_date + 1.day, vtend_at: base_date + 3.day, name: 'two.a')
+      assert_equal 3, instance.bt_versions.count
+
+      assert_equal ARange[base_date + 1.day, base_date + 3.day], revision.vt_range,           "new record has updated valid period"
+      assert_equal 'two.a', revision.name
+
+      assert_equal ARange[instance2.ttstart_at, revision.ttstart_at], instance2.tt_range,     "old record has revised ttend"
+      assert_equal 'two', instance2.name
     end
   end
+
 
   def new_record_assertions(record, now_time=Time.zone.now, transaction_time=nil)
     # Test valid time 
@@ -73,7 +118,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     assert record.tt_intersects?(now_time)
   end
 
-  def test_new_and_save
+  def test_non_temporal_new_and_save
     ActsAsBitemporalTestDatabase.with_model(:extra_columns => {:entity_id => :integer }) do |bt_model|
       record = bt_model.new(entity_id: 1000)
       record.save
@@ -81,22 +126,16 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     end
   end
 
-  def test_create
-    ActsAsBitemporalTestDatabase.with_model(:extra_columns => {:entity_id => :integer }) do |bt_model|
-      record = bt_model.create!(entity_id: 1000)
-      new_record_assertions(record, Time.zone.now)
-    end
-  end
 
   def test_bt_update_attributes
     with_one_record do |bt_model|
       first             = bt_model.first
       original_attrs    = first.attributes
-      second            = first.bt_update_attributes({})
+      second            = first.bt_update_attributes(name: "two")
 
       assert_equal 3,   first.bt_versions.count
 
-      update_record_assertions(bt_model, original_attrs, first.ttend_at)
+      update_record_assertions(bt_model, original_attrs, first.ttend_at, name: [nil, "two"])
     end
   end
 
@@ -128,6 +167,10 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     assert_equal transaction_time, current.ttstart_at
     assert                         current.tt_forever?
 
+    diffs.each do |k,(ov, nv)|
+      assert_equal nv, current[k]
+    end
+
     # Convenience method
     assert       current.forever?
 
@@ -150,7 +193,6 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
 
       current_rec_after   = current_rec.reload
 
-      warn current_rec_before.inspect
       assert_equal current_rec_before['vtstart_at'],  current_rec_after.vtstart_at,   "vtstart_at unchanged"
       assert_equal current_rec_before['vtend_at'],    current_rec_after.vtend_at,     "vtend_at unchanged"
       assert_equal current_rec_before['ttstart_at'],  current_rec_after.ttstart_at,   "ttstart_at unchanged"
