@@ -103,7 +103,12 @@ class ActsAsBitemporalRangeTest < ActiveSupport::TestCase
   end
 
   CoverCases = [
-    [true, 1, 2, 1, 2],
+    [true, 1, 2,  1, 2],
+    [true, 1, 10, 1, 2],
+    [true, 1, 10, 2, 4],
+    [true, 1, 10, 8, 10],
+    [false, 1, 10, 8, 15],
+    [false, 1, 10, 0, 2],
   ]
 
   def test_cover
@@ -111,6 +116,22 @@ class ActsAsBitemporalRangeTest < ActiveSupport::TestCase
       assert_equal expected, ARange[a_start, a_end].covers?(b_start, b_end)
       assert_equal expected, ARange[a_start, a_end].covers?(ARange[b_start, b_end])
       assert_equal expected, ARange[a_start, a_end].covers?(b_start...b_end)
+    end
+  end
+
+  DisjointCases = [
+    # First    Second   Expected Disjuction
+    [ [10,20], [0,15],  [[0,10],  [15,20] ]],
+    [ [10,20], [10,15], [[15,20]          ]],
+    [ [10,20], [12,15], [[10,12], [15,20] ]],
+    [ [10,20], [15,20], [[10,15]          ]],
+    [ [10,20], [15,25], [[10,15], [20,25] ]],
+    [ [10,20], [20,25], [[10,20], [20,25] ]],
+  ]
+
+  def test_xor
+    DisjointCases.each do |first, second, disjoint|
+      assert_equal(disjoint.map { |pair| ARange[*pair] }, ARange[*first].xor(*second))
     end
   end
 

@@ -61,14 +61,61 @@ module ActsAsBitemporal
       end
     end
 
-    def merge(range_or_start, end_instant=nil)
+    def merge(*args)
+      other = coerce_range(*args)
+      raise ArgumentError, "ranges are disjoint" if disjoint?(other) and !meets?(other)
+      self.class.new([self.begin, other.begin].min, [self.end, other.end].max)
+    end
+
+    def meets?(*args)
+      other = coerce_range(*args)
+      self.begin == other.end or other.begin == self.end
+    end
+
+    # Return range representing intersection of this range and other range.
+    def intersection(*args)
+      other = coerce_range(*args)
+      sorted = [self, other].sort
+
+      return nil if sorted[0].end < sorted[1].begin
+
+      ARange[sorted[1].begin, [sorted[1].end, sorted[0].end].min]
+    end
+
+    def difference(*other)
+      xor(intersection(*other))
+    end
+
+    # Return array of ranges representing intervals that are in this range or the other, but not both.
+    def xor(*args)
+      other = coerce_range(*args)
+      intersection = intersection(other)
+      return [self, other].sort unless intersection
+
+      merged = merge(other)
+
+      [ ARange[merged.begin, intersection.begin], ARange[intersection.end, merged.end] ].reject { |r| r.instant? } 
+    end
+
+    alias :^ xor
+
+    def coerce_range(range_or_start, end_instant=nil)
       if end_instant
-        other_start, other_end = range_or_start, end_instant
+        self.class.new(range_or_start, end_instant)
+      elsif range_or_start.respond_to?(:begin)
+        range_or_start
       else
-        other_start, other_end = range_or_start.begin, range_or_start.end
+        self.class.new(range_or_start, range_or_start)
       end
-      raise ArgumentError, "ranges are disjoint" if disjoint?(other_start, other_end)
-      self.class.new([self.begin, other_start].min, [self.end, other_end].max)
+    end
+
+    def instant?
+      self.begin == self.end
+    end
+
+    # Partial ordering of ranges based on the start endpoint.
+    def <=>(other)
+      self.begin <=> other.begin
     end
   end
 end

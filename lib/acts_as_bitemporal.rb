@@ -18,10 +18,6 @@ module ActsAsBitemporal
 
   extend ActiveSupport::Concern
 
-  included do
-    before_validation :complete_bt_timestamps
-    validate          :bt_scope_constraint
-  end
   
   def bt_scope_constraint_violation?
     bt_versions.vt_intersect(vtstart_at, vtend_at).tt_intersect(ttstart_at).exists?
@@ -29,9 +25,15 @@ module ActsAsBitemporal
 
   # The new record can not have a valid time period that overlaps with any existing record for the same entity.
   def bt_scope_constraint
-    if bt_scope_constraint_violation?
+    if !new_record? and !bt_safe?
+      errors[:base] << "invalid use of save on temporal records"
+    elsif bt_scope_constraint_violation?
       errors[:base] << "overlaps existing valid record"
     end
+  end
+
+  def bt_after_commit
+    self.bt_safe = false
   end
 
   # Return relation that evalutes to all images of the current record.
@@ -110,7 +112,6 @@ module ActsAsBitemporal
     vt_intersects?(now) and tt_intersects?(now)
   end
 
-
   def complete_bt_timestamps
     transaction_time = Time.zone.now
     self.vtstart_at ||= transaction_time
@@ -126,9 +127,7 @@ module ActsAsBitemporal
     elsif vtstart_at_changed? or vtend_at_changed?
       vt_revise(vtstart_at: vtstart_at, vtend_at: vtend_at)
     else
-      #save(*args)
       bt_update_attributes( Hash[changes.map { |k,(oldv, newv)| [k,newv] }] )
-      #
     end
   end
 
@@ -140,6 +139,7 @@ module ActsAsBitemporal
   #   2) future records deleted by:
   #     A) terminating their transaction period
   def bt_delete(commit_time=nil)
+
     ActiveRecord::Base.transaction do
       commit_time ||= Time.zone.now
 
@@ -148,17 +148,35 @@ module ActsAsBitemporal
 
       # Record revised valid period.
       self.class.create(bt_nontemporal_attributes.merge(
-          vtstart_at: vtstart_at,
-          vtend_at: commit_time,
-          ttstart_at: commit_time,
-          ttend_at: Forever)
-        )
+        vtstart_at: vtstart_at,
+        vtend_at: commit_time,
+        ttstart_at: commit_time,
+        ttend_at: Forever)
+                       )
 
-      # Close the transaction period for future records.
-      bt_versions.tt_forever.where(['vtend_at > ?', commit_time]).update_all(:ttend_at => commit_time)
+       # Close the transaction period for future records.
+       bt_versions.tt_forever.where(['vtend_at > ?', commit_time]).update_all(:ttend_at => commit_time)
     end
     commit_time
   end
+
+  def bt_delete2(commit_time=nil)
+    return bt_delete3(vtstart_at, vtend_at, commit_time)
+  end
+
+  def bt_delete3(start_at, end_at, commit_time=nil)
+    ActiveRecord::Base.transaction do
+      commit_time ||= Time.zone.now
+      bt_versions.tt_forever.vt_intersect(start_at, end_at).order(:vtstart_at).each do |existing|
+        existing.update_column(:ttend_at, commit_time)
+        diff = existing.vt_range.difference(start_at, end_at)
+        diff.each do |segment|
+          self.class.create!(existing.bt_nontemporal_attributes.merge(vtstart_at: segment.begin, vtend_at: segment.end, ttstart_at: commit_time))
+        end
+      end
+    end
+  end
+
 
   # Replace current version with new version.
   def bt_update_attributes(new_attrs)
@@ -194,6 +212,32 @@ module ActsAsBitemporal
   end
 
   def vt_revise(attrs)
+    revised_attrs = attrs.dup
+    newstart  = (revised_attrs.delete(:vtstart_at) || vtstart_at).try(:to_time)
+    newend    = (revised_attrs.delete(:vtend_at) || vtend_at).try(:to_time)
+
+    raise ArgumentError, "invalid revision of non-current record" unless tt_forever?
+
+    transaction_time = Time.zone.now
+    ActiveRecord::Base.transaction do
+      overlapped = self.class.tt_forever.vt_intersect(newstart, newend).lock(true).to_a
+      update_column(:ttend_at, transaction_time) if overlapped.count > 0
+      overlapped.each do |rec|
+        if rec.vtstart_at < newstart
+          self.class.create!(rec.bt_nontemporal_attributes.merge(vtstart_at: rec.vtstart_at, vtend_at: newstart, ttstart_at: transaction_time))
+        end
+
+        if newend <= rec.vtend_at
+          self.class.create!(rec.bt_nontemporal_attributes.merge(vtstart_at: newend, vtend_at: rec.vtend_at, ttstart_at: transaction_time))
+        end
+
+        rec.update_column(:ttend_at, transaction_time)
+      end
+      self.class.create!(bt_nontemporal_attributes.merge(revised_attrs).merge(vtstart_at: newstart, vtend_at: newend, ttstart_at: transaction_time))
+    end
+  end
+
+  def vt_revise2(attrs)
     revised_attrs = attrs.dup
     newstart  = (revised_attrs.delete(:vtstart_at) || vtstart_at).try(:to_time)
     newend    = (revised_attrs.delete(:vtend_at) || vtend_at).try(:to_time)
@@ -239,6 +283,13 @@ module ActsAsBitemporal
     updates = updates.stringify_keys
 
     bt_nontemporal_attributes.merge( updates.slice(*self.class.bt_versioned_columns) )
+  end
+
+  private 
+
+  # Used internally to prevent accidental use of AR methods that don't ensure bitemporal semantics.
+  def bt_safe?
+    @bt_safe
   end
 
   module ClassMethods
@@ -358,6 +409,7 @@ module ActsAsBitemporal
       ActiveRecord::Base.connection.execute("select #{subquery2.exists.not.to_sql}").values == "t"
     end
 
+
   end
 
   module AssociationMethods
@@ -404,5 +456,12 @@ class << ActiveRecord::Base
     end
 
     self.bt_versioned_columns = self.column_names - bt_scope_columns - ActsAsBitemporal::TemporalColumnNames - bt_exclude_columns
+
+    attr_accessor :bt_safe
+
+    after_commit      :bt_after_commit
+    before_validation :complete_bt_timestamps
+    validate          :bt_scope_constraint
+
   end
 end

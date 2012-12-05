@@ -7,55 +7,177 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
   Forever = ActsAsBitemporal::Forever
   EntityOptions = {:extra_columns => {:entity_id => :integer, :name => :string }}.freeze
 
+  def entity_attributes(options={})
+    {entity_id: 100, name: "one"}.merge(options)
+  end
+
   def with_one_record(options={})
     entity_options = {:extra_columns => {:entity_id => :integer, :name => :string }}
     ActsAsBitemporalTestDatabase.with_model(options.reverse_merge(entity_options)) do |bt_model|
-      key_attributes = {entity_id: 100, name: "First"}
-      bt_model.new(key_attributes).save!
+      bt_model.new(entity_attributes).save!
       yield bt_model
     end
   end
 
-  def test_new_with_no_scope_conflicts
-    base_date = Time.zone.today
+  def capture_transaction_bounds
+    before = Time.zone.now
+    result = yield
+    after = Time.zone.now
+    return result, ARange[before, after]
+  end
+
+  def empty_database(options={})
     ActsAsBitemporalTestDatabase.with_model(EntityOptions) do |bt_model|
-      instance = bt_model.create!(entity_id: 100, name: "one", vtstart_at: base_date, vtend_at: base_date + 1)
-      assert_equal instance.vt_range, ARange[base_date, base_date + 1]
+      yield bt_model
     end
   end
 
-  def test_new_with_conflicts
+  def test_current_time_create_with_no_conflicts
+    empty_database do |bt_model|
+      instance, bounds = capture_transaction_bounds do
+        bt_model.create!(entity_attributes)
+      end
+
+      current_time_assertions(instance, bounds)
+    end
+  end
+ 
+  def test_current_time_new_then_save_with_no_conflicts
+    empty_database do |bt_model|
+      instance, bounds = capture_transaction_bounds do
+        bt_model.new(entity_attributes).tap { |r| r.save! }
+      end
+
+      current_time_assertions(instance, bounds)
+    end
+  end
+
+  def current_time_assertions(record, transaction_bounds)
+    assert transaction_bounds.covers?(record.vtstart_at),          "valid time started during create call"
+    assert_equal Forever, record.vtend_at,                            "valid time ends at Forever"
+
+    assert_equal record.vtstart_at, record.ttstart_at,              "transaction started at vtstart_at"
+    assert_equal Forever, record.ttend_at,                            "transaction ends at Forever"
+  end
+
+
+  def test_current_time_create_with_current_time_conflict
+    with_one_record do |bt_model|
+      assert_raises(ActiveRecord::RecordInvalid) do
+        bt_model.create!(entity_attributes(name: "two"))
+      end
+    end
+  end
+
+  def test_current_time_new_then_save_with_current_time_conflict
+    with_one_record do |bt_model|
+      assert_raises(ActiveRecord::RecordInvalid) do
+        record = bt_model.new(entity_attributes(name: "two"))
+        record.save!
+      end
+    end
+  end
+
+  def test_valid_time_create_with_no_scope_conflicts
     base_date = Time.zone.today
-    ActsAsBitemporalTestDatabase.with_model(EntityOptions) do |bt_model|
-      instance = bt_model.create!(entity_id: 100, name: "one", vtstart_at: base_date, vtend_at: base_date + 1)
+    empty_database do |bt_model|
+      instance, bounds = capture_transaction_bounds do
+        bt_model.create!(entity_attributes(vtstart_at: base_date, vtend_at: base_date + 1))
+      end
+
+      valid_time_assertions(instance, ARange[base_date, base_date + 1], bounds)
+    end
+  end
+
+  def valid_time_assertions(record, vt_range, tt_bounds)
+    assert_equal vt_range, record.vt_range,               "valid time as expected"
+    assert       tt_bounds.covers?(record.ttstart_at),    "transaction start bounded"
+    assert_equal Forever,  record.ttend_at,               "transaction ends at Forever"
+  end
+
+  def test_valid_time_new_then_save_with_no_scope_conflicts
+    base_date = Time.zone.today
+    empty_database do |bt_model|
+      instance, bounds = capture_transaction_bounds do
+        bt_model.new(entity_attributes(vtstart_at: base_date, vtend_at: base_date + 1)).tap { |r| r.save! }
+      end
+
+      valid_time_assertions(instance, ARange[base_date, base_date + 1], bounds)
+    end
+  end
+
+  def test_valid_time_create_with_and_without_conflicts
+    base_date = Time.zone.today
+    empty_database do |bt_model|
+      instance = bt_model.create!(entity_attributes(vtstart_at: base_date, vtend_at: base_date + 1))
 
       assert_raises(ActiveRecord::RecordInvalid) { 
         # Attempt to create a valid period conflict for the defined scope.
-        bt_model.create!(entity_id: 100, name: "two", vtstart_at: base_date, vtend_at: base_date + 1) 
+        bt_model.create!(entity_attributes(name: "two", vtstart_at: base_date, vtend_at: base_date + 1) )
       }
 
       # This record doesn't conflict with the existing valid time periods.
-      instance2 = bt_model.create!(entity_id: 100, name: "two", vtstart_at: base_date + 1, vtend_at: base_date + 2)
-      assert_equal instance2.vt_range, ARange[base_date + 1, base_date + 2]
-      assert_equal 2, instance.bt_versions.count
+      instance2, bounds = capture_transaction_bounds do
+        bt_model.create!(entity_attributes(name: "two", vtstart_at: base_date + 1, vtend_at: base_date + 2))
+      end
+      valid_time_assertions(instance2, ARange[base_date + 1, base_date + 2], bounds)
+
+      assert_equal 2, instance.bt_versions.count,         "disjoint valid_time records"
     end
   end
 
-  def test_create_with_no_scope_conflict
-    ActsAsBitemporalTestDatabase.with_model(:extra_columns => {:entity_id => :integer }) do |bt_model|
-      record = bt_model.create!(entity_id: 1000)
-      new_record_assertions(record, Time.zone.now)
+  def test_valid_time_new_save_with_and_without_conflicts
+    base_date = Time.zone.today
+    empty_database do |bt_model|
+      instance = bt_model.create!(entity_attributes(vtstart_at: base_date, vtend_at: base_date + 1))
+
+      assert_raises(ActiveRecord::RecordInvalid) { 
+        # Attempt to create a valid period conflict for the defined scope.
+        record = bt_model.new(entity_attributes(name: "two", vtstart_at: base_date, vtend_at: base_date + 1) )
+        record.save!
+      }
+
+      # This record doesn't conflict with the existing valid time periods.
+      instance2, bounds = capture_transaction_bounds do
+        bt_model.new(entity_attributes(name: "two", vtstart_at: base_date + 1, vtend_at: base_date + 2)).tap do |r| 
+          r.save!
+        end
+      end
+      valid_time_assertions(instance2, ARange[base_date + 1, base_date + 2], bounds)
+
+      assert_equal 2, instance.bt_versions.count,         "disjoint valid_time records"
     end
   end
 
-  def x_test_bt_save_with_temporal_changes
-    ActsAsBitemporalTestDatabase.with_model(:extra_columns => {:entity_id => :integer }) do |bt_model|
-      record = bt_model.create!(entity_id: 1000)
+  def test_save_on_modified_records
+    empty_database do |bt_model|
+      base_date = Time.zone.today
+
+      first            = bt_model.create!(entity_id: 2000, name: "One", vtstart_at: base_date, vtend_at: base_date + 2)
+      first.vtstart_at = base_date + 3
+      first.vtend_at   = base_date + 4
+
+      refute            first.save,               "save can't be used to update records"
+      assert_raises(ActiveRecord::RecordInvalid,  "save can't be used to update records") do
+        first.save!
+      end
+
+      second = bt_model.create!(entity_id: 3000, name: "Two")
+      second.name = "Two A"
+
+      refute            second.save,               "save can't be used to update records"
+    end
+  end
+
+  def test_bt_save_with_temporal_changes
+    empty_database do |bt_model|
+      record = bt_model.create!(entity_id: 1000, name: "One")
 
       record.vtstart_at   = new_start = Time.zone.now - 1.day
-      record.vtstart_at   = new_end   = Time.zone.now + 1.day
+      record.vtend_at     = new_end   = Time.zone.now + 1.day
+      revision            = record.bt_save
 
-      refute_nil(revision = record.bt_save, "bt_save succeeded")
+      assert_kind_of(bt_model, revision, "bt_save succeeded")
       assert_equal ARange[record.ttstart_at, revision.ttstart_at], record.tt_range,     "old record transaction is closed"
       assert_equal ARange[new_start, new_end], revision.vt_range,                       "new record has temporal changes"
     end
@@ -63,14 +185,14 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
 
   def test_vt_revise
     base_date = Time.zone.now
-    ActsAsBitemporalTestDatabase.with_model(EntityOptions) do |bt_model|
+    empty_database do |bt_model|
 
       # Create two records with disjoint valid periods.
-      instance = bt_model.create!(entity_id: 100, name: "one", vtstart_at: base_date, vtend_at: base_date + 1.day)
-      instance2 = bt_model.create!(entity_id: 100, name: "two", vtstart_at: base_date + 1.day, vtend_at: base_date + 2.day)
+      instance = bt_model.create!(entity_attributes(vtstart_at: base_date, vtend_at: base_date + 1.day))
+      instance2 = bt_model.create!(entity_attributes(name: "two", vtstart_at: base_date + 1.day, vtend_at: base_date + 2.day))
 
-      # Revise the second record to extends its valid period.
       revision = instance2.vt_revise(vtstart_at: base_date + 1.day, vtend_at: base_date + 3.day)
+
       assert_equal 3, instance.bt_versions.count
 
       assert_equal ARange[base_date + 1.day, base_date + 3.day], revision.vt_range,                   "new record has updated valid period"
@@ -80,11 +202,11 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
 
   def test_vt_revise_with_non_temporal_changes
     base_date = Time.zone.now
-    ActsAsBitemporalTestDatabase.with_model(EntityOptions) do |bt_model|
+    empty_database do |bt_model|
 
       # Create two records with disjoint valid periods.
-      instance = bt_model.create!(entity_id: 100, name: "one", vtstart_at: base_date, vtend_at: base_date + 1.day)
-      instance2 = bt_model.create!(entity_id: 100, name: "two", vtstart_at: base_date + 1.day, vtend_at: base_date + 2.day)
+      instance = bt_model.create!(entity_attributes(vtstart_at: base_date, vtend_at: base_date + 1.day))
+      instance2 = bt_model.create!(entity_attributes(name: "two", vtstart_at: base_date + 1.day, vtend_at: base_date + 2.day))
 
       # Revise the second record to extends its valid period and change its name.
       revision = instance2.vt_revise(vtstart_at: base_date + 1.day, vtend_at: base_date + 3.day, name: 'two.a')
@@ -97,7 +219,6 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
       assert_equal 'two', instance2.name
     end
   end
-
 
   def new_record_assertions(record, now_time=Time.zone.now, transaction_time=nil)
     # Test valid time 
@@ -215,6 +336,90 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
   def test_bt_delete_with_future_records
     skip("not implemented")
   end
+
+  UpdateCases = [
+    # StartList     Rec     Update   ResultList
+    [ [[2,4]],      0,      [3, 5], [ [2,3], [3,5]            ]],
+    [ [[2,4]],      0,      [5, 7], [ [2,4], [5,7]            ]],
+    [ [[2,nil]],    0,      [3, 5], [ [2,3], [3, 5], [5,nil]  ]]
+  ]
+
+  def test_update_cases
+    UpdateCases.each do |(start_list,  record,  update, result_list)|
+      empty_database do |bt_model|
+        base_date = Time.zone.today
+
+        # Fill databsae
+        start_list.each_with_index do |(start_offset, end_offset), index|
+          bt_model.create(entity_id: index, vtstart_at: base_date + start_offset, vtend_at: end_offset ? base_date + end_offset : Forever)
+        end
+
+        # apply change
+        base_record = bt_model.where(entity_id: record).first.tap do |rec|
+          rec.vtstart_at = base_date + update.first
+          rec.vtend_at   = base_date + update.last
+          rec.bt_save
+        end
+
+        refute base_record.new_record?
+
+        versions = base_record.bt_versions.tt_forever.order(:vtstart_at)
+        assert_equal result_list.count, versions.count
+
+        # verify results
+        versions.each_with_index do |result_record, index|
+          assert_equal (base_date + result_list[index].first).to_time, result_record.vtstart_at, "record #{index}, vtstart_at correct"
+
+          expected_end = result_list[index].last ? (base_date + result_list[index].last).to_time : Forever
+          assert_equal expected_end, result_record.vtend_at, "record #{index}, vtend_at correct"
+        end
+      end
+    end
+  end
+
+  DeleteCases = [
+    # StartList         Del         ResultList
+    [ [[2,4]],             [2,4],      [            ]],
+    [ [[2,4], [6,8]],      [2,4],      [ [6,8]      ]],
+    [ [[2,4], [6,8]],      [3,7],      [ [2,3], [7,8]]],
+    [ [[2,4],[4,6],[6,8]], [3,7],      [ [2,3], [7,8]]],
+    [ [[2,nil]],           [3,nil],    [ [2,3]]],
+    [ [[2,nil]],           [3,5],      [ [2,3], [5,nil]]]
+  ]
+  
+  def test_delete_cases
+    DeleteCases.each_with_index do |(start_list,  del_range, result_list), index|
+      empty_database do |bt_model|
+        base_date = Time.zone.today
+
+        # Fill databsae
+        start_list.each_with_index do |(start_offset, end_offset), index|
+          bt_model.create!(entity_id: 100, vtstart_at: base_date + start_offset, vtend_at: end_offset ? base_date + end_offset : Forever)
+        end
+
+        base_record = bt_model.first
+        versions    = base_record.bt_versions.tt_forever.order(:vtstart_at)
+
+        assert_equal start_list.count, versions.count
+
+        # apply change
+        deleted = base_record.bt_delete3( (base_date + del_range.first).to_time, del_range.last ? (base_date + del_range.last).to_time : Forever )
+
+        assert deleted
+
+        assert_equal result_list.count, versions.count, "#{index}, failed: #{versions.inspect}"
+
+        # verify results
+        versions.each_with_index do |result_record, index|
+          assert_equal (base_date + result_list[index].first).to_time, result_record.vtstart_at, "record #{index}, vtstart_at correct"
+
+          expected_end = result_list[index].last ? (base_date + result_list[index].last).to_time : Forever
+          assert_equal expected_end, result_record.vtend_at, "record #{index}, vtend_at correct"
+        end
+      end
+    end
+  end
+        
 
 end
 
