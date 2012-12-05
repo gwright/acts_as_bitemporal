@@ -131,35 +131,17 @@ module ActsAsBitemporal
     end
   end
 
-  # Mark the current record as deleted.
-  # XXX ASSUMPTION: The record is bt_current.
-  #   1) current record marked as deleted by:
-  #     A) terminating the transaction period
-  #     B) inserting new transaction with truncated valid time.
-  #   2) future records deleted by:
-  #     A) terminating their transaction period
+  # Remove records from commit_time to vtend_at for this record.
+  # Use commit_time as the transaction time if given.
   def bt_delete(commit_time=nil)
-
-    ActiveRecord::Base.transaction do
-      commit_time ||= Time.zone.now
-
-      # Close the transaction period for existing records.
-      update_column(:ttend_at, commit_time)
-
-      # Record revised valid period.
-      self.class.create(bt_nontemporal_attributes.merge(
-        vtstart_at: vtstart_at,
-        vtend_at: commit_time,
-        ttstart_at: commit_time,
-        ttend_at: Forever)
-                       )
-
-       # Close the transaction period for future records.
-       bt_versions.tt_forever.where(['vtend_at > ?', commit_time]).update_all(:ttend_at => commit_time)
-    end
-    commit_time
+    commit_time ||= Time.zone.now
+    result = bt_delete3(commit_time, vtend_at, commit_time)
+    reload
+    result
   end
 
+  # Remove records associated with the vt_range for this record.
+  # Use commit_time as the transaction time if given.
   def bt_delete2(commit_time=nil)
     return bt_delete3(vtstart_at, vtend_at, commit_time)
   end
@@ -175,6 +157,7 @@ module ActsAsBitemporal
         end
       end
     end
+    commit_time
   end
 
 
