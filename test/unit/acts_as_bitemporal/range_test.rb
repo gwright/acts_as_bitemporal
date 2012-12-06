@@ -94,7 +94,11 @@ class ActsAsBitemporalRangeTest < ActiveSupport::TestCase
 
   def test_with_invalid_argument
     assert_raises ArgumentError do 
-      ARange.new(1,4).intersects?(true)
+      ARange.new(1,4).intersects?(Object.new)
+    end
+
+    assert_raises ArgumentError do 
+      ARange.new(1,4).intersects?(Date.today, Date.today + 1)
     end
   end
 
@@ -103,12 +107,13 @@ class ActsAsBitemporalRangeTest < ActiveSupport::TestCase
   end
 
   CoverCases = [
-    [true, 1, 2,  1, 2],
-    [true, 1, 10, 1, 2],
-    [true, 1, 10, 2, 4],
-    [true, 1, 10, 8, 10],
-    [false, 1, 10, 8, 15],
-    [false, 1, 10, 0, 2],
+    # Exepected   First  Second
+    [true,        1, 2,  1, 2],
+    [true,        1, 10, 1, 2],
+    [true,        1, 10, 2, 4],
+    [true,        1, 10, 8, 10],
+    [false,       1, 10, 8, 15],
+    [false,       1, 10, 0, 2],
   ]
 
   def test_cover
@@ -119,8 +124,8 @@ class ActsAsBitemporalRangeTest < ActiveSupport::TestCase
     end
   end
 
-  DisjointCases = [
-    # First    Second   Expected Disjuction
+  XorCases = [
+    # First    Second   Expected Result
     [ [10,20], [0,15],  [[0,10],  [15,20] ]],
     [ [10,20], [10,15], [[15,20]          ]],
     [ [10,20], [12,15], [[10,12], [15,20] ]],
@@ -130,8 +135,25 @@ class ActsAsBitemporalRangeTest < ActiveSupport::TestCase
   ]
 
   def test_xor
-    DisjointCases.each do |first, second, disjoint|
-      assert_equal(disjoint.map { |pair| ARange[*pair] }, ARange[*first].xor(*second))
+    XorCases.each do |first, second, result|
+      assert_equal(result.map { |pair| ARange[*pair] }, ARange[*first].xor(*second))
+    end
+  end
+
+  MeetsCases = [
+    # First    Second   Expected Result
+    [ [10,20], [0,15],  false],
+    [ [10,20], [0,10],  true],
+    [ [10,20], [10,15], false],
+    [ [10,20], [10,20], false],
+    [ [10,20], [15,20], false],
+    [ [10,20], [15,25], false],
+    [ [10,20], [20,25], true]
+  ]
+
+  def test_meets
+    MeetsCases.each do |first, second, expected|
+      assert_equal(expected, ARange[*first].meets?(*second))
     end
   end
 

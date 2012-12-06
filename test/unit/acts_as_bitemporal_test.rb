@@ -252,11 +252,21 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     with_one_record do |bt_model|
       first             = bt_model.first
       original_attrs    = first.attributes
-      second            = first.bt_update_attributes(name: "two")
+      second            = first.bt_update_attributes(:name =>  "two")
 
-      assert_equal 3,   first.bt_versions.count
+      assert_equal 2,   first.bt_versions.count
 
-      update_record_assertions(bt_model, original_attrs, first.ttend_at, name: [nil, "two"])
+      update_record_assertions(bt_model, original_attrs, first.ttend_at, {name: [nil, "two"]}, "update_attributes: ")
+    end
+  end
+
+  def test_bt_update_attributes_with_superfluous_change
+    with_one_record do |bt_model|
+      first             = bt_model.first
+      original_attrs    = first.attributes
+      second            = first.bt_update_attributes(:name =>  "one")
+      assert_equal 1,   first.bt_versions.count
+      assert_nil        second
     end
   end
 
@@ -266,41 +276,43 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
       original_attrs = first.attributes
 
       first.name = new_name = "Second"
-      first.bt_save
+      revision = first.bt_save
 
-      update_record_assertions(bt_model, original_attrs, first.ttend_at, name: [original_attrs[:name], new_name])
+      assert_equal first.ttend_at, revision.ttstart_at,  "transaction times match"
+
+      update_record_assertions(bt_model, original_attrs, first.ttend_at, {name: [original_attrs[:name], new_name]}, "save_as_update: ")
     end
   end
 
-  def update_record_assertions(model, original_attrs, transaction_time, diffs={})
+  def update_record_assertions(model, original_attrs, transaction_time, diffs={}, prefix="")
     original = model.where(id: original_attrs['id']).first!
     current  = model.where(original_attrs.slice(*model.bt_scope_columns)).bt_current!
 
     # Previous version
-    assert_equal original_attrs['vtstart_at'],  original.vtstart_at,       "no change to vtstart_at"
-    assert_equal original_attrs['vtend_at'],    original.vtend_at,         "no change to vtend_at"
-    assert_equal original_attrs['ttstart_at'],  original.ttstart_at,       "no change to ttstart_at"
-    assert_equal transaction_time,              original.ttend_at,         "previous version removed by transaction"
+    assert_equal original_attrs['vtstart_at'],  original.vtstart_at,       "#{prefix}no change to vtstart_at"
+    assert_equal original_attrs['vtend_at'],    original.vtend_at,         "#{prefix}no change to vtend_at"
+    assert_equal original_attrs['ttstart_at'],  original.ttstart_at,       "#{prefix}no change to ttstart_at"
+    assert_equal transaction_time,              original.ttend_at,         "#{prefix}previous version removed by transaction"
 
     # Newest version
-    assert_equal transaction_time, current.vtstart_at,     "newest version becomes valid at transaction time"
-    assert                         current.vt_forever?,    "newest version valid forever"
-    assert_equal transaction_time, current.ttstart_at
-    assert                         current.tt_forever?
+    assert_equal original_attrs['vtstart_at'], current.vtstart_at,    "#{prefix}no changes to valid start"
+    assert_equal original_attrs['vtend_at'],   current.vtend_at ,     "#{prefix}no changes to valid end" 
+    assert_equal transaction_time, current.ttstart_at,                "#{prefix}transaction times match"
+    assert                         current.tt_forever?,               "#{prefix}transaction valid until changed"
 
     diffs.each do |k,(ov, nv)|
-      assert_equal nv, current[k]
+      assert_equal nv, current[k.to_s]
     end
 
     # Convenience method
     assert       current.forever?
 
     # Revised previous record
-    revised = current.bt_versions.tt_current.vt_intersect(original_attrs['vtstart_at']).first!
-    assert_equal original_attrs['vtstart_at'],  revised.vtstart_at,       "original valid start"
-    assert_equal transaction_time,              revised.vtend_at,         "transaction valid end"
-    assert_equal transaction_time,              revised.ttstart_at,       "must start at transaction time"
-    assert       revised.tt_forever?,                                     "forever valid end"
+    #revised = current.bt_versions.tt_current.vt_intersect(original_attrs['vtstart_at']).first!
+    #assert_equal original_attrs['vtstart_at'],  revised.vtstart_at,       "original valid start"
+    #assert_equal transaction_time,              revised.vtend_at,         "transaction valid end"
+    #assert_equal transaction_time,              revised.ttstart_at,       "must start at transaction time"
+    #assert       revised.tt_forever?,                                     "forever valid end"
   end
 
   def test_bt_delete_no_future_records
