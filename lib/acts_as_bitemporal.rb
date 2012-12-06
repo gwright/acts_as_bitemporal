@@ -154,10 +154,9 @@ module ActsAsBitemporal
     ActiveRecord::Base.transaction do
       commit_time ||= Time.zone.now
       bt_versions.tt_forever.vt_intersect(start_at, end_at).order(:vtstart_at).each do |existing|
-        existing.update_column(:ttend_at, commit_time)
-        diff = existing.vt_range.difference(start_at, end_at)
-        diff.each do |segment|
-          self.class.create!(existing.bt_nontemporal_attributes.merge(vtstart_at: segment.begin, vtend_at: segment.end, ttstart_at: commit_time))
+        existing.bt_finalize(commit_time)
+        existing.vt_range.difference(start_at, end_at).each do |segment|
+          bt_dup(segment.begin, segment.end).bt_commit(commit_time)
         end
       end
     end
@@ -192,14 +191,12 @@ module ActsAsBitemporal
         rec.bt_attributes = changes
       end
 
-      # Adjust records scheduled in future that intersect until-changed transaction period.
-      bt_versions.tt_forever.where(['vtstart_at > ?', commit_time]).each do |future_rec|
-        future_rec.update_column(:ttend_at, commit_time)
-        self.class.new(future_rec.bt_nontemporal_attributes.merge(ttstart_at: commit_time, ttend_at: Forever)).save!
-      end
-    end
+      return unless changed? or bt_nontemporal_attributes != revision.bt_nontemporal_attributes
 
-    new_record
+      bt_finalize(commit_time)
+      revision.bt_commit(commit_time)
+      revision
+    end
   end
 
   def vt_revise(attrs)
