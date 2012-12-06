@@ -164,28 +164,32 @@ module ActsAsBitemporal
     commit_time
   end
 
+  # Duplicate the existing record but configure with new valid time range.
+  def bt_dup(vt_start=vtstart_at, vt_end=vtend_at)
+    self.class.new(bt_nontemporal_attributes) do |rec|
+      rec.vtstart_at = vt_start
+      rec.vtend_at = vt_end
+    end
+  end
 
-  # Replace current version with new version.
-  def bt_update_attributes(new_attrs)
-    #return vt_revise(new_attrs)
-    commit_time = Time.zone.now
+  def bt_commit(commit_time=nil)
+    if new_record?
+      self.ttstart_at = commit_time
+      self.save
+    end
+  end
 
-    new_record = nil
+  def bt_finalize(commit_time=Time.zone.now)
+    update_column(:ttend_at, commit_time)
+  end
+
+  def bt_update_attributes(changes)
+    return unless tt_forever?
 
     ActiveRecord::Base.transaction do
-      if tt_forever? and vt_intersects?(commit_time)
-
-        # Revise current version as "deleted".
-        bt_delete(commit_time)
-
-        # Record new data for the remaining period.
-        new_record = self.class.create!(
-          bt_attributes_merge(new_attrs).
-          merge(vtstart_at: commit_time,
-                vtend_at: vtend_at,
-                ttstart_at: commit_time,
-                ttend_at: Forever)
-        )
+      commit_time = Time.zone.now
+      revision = bt_dup.tap do |rec|
+        rec.bt_attributes = changes
       end
 
       # Adjust records scheduled in future that intersect until-changed transaction period.
@@ -208,7 +212,7 @@ module ActsAsBitemporal
     transaction_time = Time.zone.now
     ActiveRecord::Base.transaction do
       overlapped = self.class.tt_forever.vt_intersect(newstart, newend).lock(true).to_a
-      update_column(:ttend_at, transaction_time) if overlapped.count > 0
+      bt_finalize(transaction_time) if overlapped.count > 0
       overlapped.each do |rec|
         if rec.vtstart_at < newstart
           self.class.create!(rec.bt_nontemporal_attributes.merge(vtstart_at: rec.vtstart_at, vtend_at: newstart, ttstart_at: transaction_time))
@@ -218,7 +222,7 @@ module ActsAsBitemporal
           self.class.create!(rec.bt_nontemporal_attributes.merge(vtstart_at: newend, vtend_at: rec.vtend_at, ttstart_at: transaction_time))
         end
 
-        rec.update_column(:ttend_at, transaction_time)
+        rec.bt_finalize(transaction_time)
       end
       self.class.create!(bt_nontemporal_attributes.merge(revised_attrs).merge(vtstart_at: newstart, vtend_at: newend, ttstart_at: transaction_time))
     end
@@ -235,7 +239,7 @@ module ActsAsBitemporal
     ActiveRecord::Base.transaction do
       commit_time = Time.zone.now
       if bt_scope_constraint_violation?
-        update_column(:ttend_at, commit_time)
+        bt_finalize(commit_time)
         new_period = vt_range.merge(newstart, newend)
         self.class.create(revised_attrs.merge(vtstart_at: new_period.begin, vtend_at: new_period.end, ttstart_at: commit_time))
       else
