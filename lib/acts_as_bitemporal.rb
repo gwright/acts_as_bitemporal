@@ -120,6 +120,10 @@ module ActsAsBitemporal
     self.ttend_at ||= Forever
   end
 
+  def bt_equal?(other)
+    bt_nontemporal_attributes == other.bt_nontemporal_attributes
+  end
+
   # Pushes changes to the database respecting bitemporal semantics.
   def bt_save(*args)
     if new_record?
@@ -266,6 +270,10 @@ module ActsAsBitemporal
     updates = updates.stringify_keys
 
     bt_nontemporal_attributes.merge( updates.slice(*self.class.bt_versioned_columns) )
+  end
+
+  def bt_attributes=(changes)
+    self.attributes = changes.stringify_keys.slice(*self.class.bt_versioned_columns)
   end
 
   private 
