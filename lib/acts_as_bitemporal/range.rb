@@ -14,50 +14,43 @@ module ActsAsBitemporal
       super(first, second, true)
     end
 
-    # Returns true if the range intersects range_or_event.
+    # Returns true if the range intersects range or value.
     #   Range[1,4].intersects?(1)             # => true
     #   Range[1,4].intersects?(4)             # => false
     #   Range[1,4].intersects?(Range[0,2])    # => true
     #   Range[1,4].intersects?(0...2)         # => true
     #   Range[1,4].intersects?(0...1)         # => false
     #   Range[1,4].intersects?(0,1)           # => false
-    def intersects?(range_or_instant, end_instant=nil)
-      if end_instant
-        start_instant = range_or_instant
-      elsif range_or_instant.respond_to?(:begin)
-        start_instant = range_or_instant.begin
-        end_instant = range_or_instant.end
-      else
-        instant = range_or_instant
-      end
+    def intersects?(*args)
+      other = coerce_range(*args)
+      raise ArgumentError, "#{self.begin.class} expected, received #{other.begin.class}" unless other.begin.kind_of?(self.begin.class)
 
-      if instant
-        raise ArgumentError, "#{self.begin.class} expected, received #{instant.class}" unless instant.kind_of?(self.begin.class)
-        self.begin <= instant and instant < self.end
+      if other.instant?
+        self.begin <= other.begin and other.end < self.end
       else
-        start_instant < self.end and self.begin < end_instant
+        other.begin < self.end and self.begin < other.end
       end
     end
 
+    # Returns true if the range does not intersect range or value.
+    #   Range[1,4].intersects?(1)             # => false
+    #   Range[1,4].intersects?(4)             # => true
+    #   Range[1,4].intersects?(Range[0,2])    # => false
+    #   Range[1,4].intersects?(0...2)         # => false
+    #   Range[1,4].intersects?(0...1)         # => true
+    #   Range[1,4].intersects?(0,1)           # => true
     def disjoint?(*args)
       not intersects?(*args)
     end
 
-    # Returns true if the range covers the entire range_or_instant.
-    def covers?(range_or_instant, end_instant=nil)
-      if end_instant
-        start_instant = range_or_instant
-      elsif range_or_instant.respond_to?(:begin)
-        start_instant = range_or_instant.begin
-        end_instant = range_or_instant.end
-      else
-        instant = range_or_instant
-      end
+    # Returns true if the range covers the entire range or value.
+    def covers?(*args)
+      other = coerce_range(*args)
 
-      if instant
-        self.begin <= instant and instant < self.end
+      if other.instant?
+        self.begin <= other.begin and other.end < self.end
       else
-        self.begin <= start_instant and end_instant <= self.end
+        self.begin <= other.begin and other.end <= self.end
       end
     end
 
@@ -67,6 +60,11 @@ module ActsAsBitemporal
       self.class.new([self.begin, other.begin].min, [self.end, other.end].max)
     end
 
+    # Returns true if there is no gap between the range and the other range.
+    #   Range[1,4].meets?(4, 5)   # => true
+    #   Range[1,4].meets?(0, 1)   # => true
+    #   Range[1,4].meets?(5, 7)   # => false
+    #   Range[1,4].meets?(1, 4)   # => false
     def meets?(*args)
       other = coerce_range(*args)
       self.begin == other.end or other.begin == self.end
@@ -103,7 +101,7 @@ module ActsAsBitemporal
       if end_instant
         self.class.new(range_or_start, end_instant)
       elsif range_or_start.respond_to?(:begin)
-        range_or_start
+        self.class.new(range_or_start.begin, range_or_start.end)
       else
         self.class.new(range_or_start, range_or_start)
       end
