@@ -7,28 +7,64 @@ require 'active_support/time'
 require 'active_record'
 
 module ActsAsBitemporal
+  extend ActiveSupport::Concern
 
   # Columns to be managed by ActsAsBitemporal
   TemporalColumnNames = %w{vtstart_at vtend_at ttstart_at ttend_at}
+  # Alias to clarify we aren't using Ruby's Range
+  ARange = ActsAsBitemporal::Range    
 
   # The timestamp used to signify an indefinite end of a time period.
-  Forever = Time.utc(9999,12,31).in_time_zone
+  Forever         = Time.utc(9999,12,31).in_time_zone
+  NegativeForever = Time.utc(1000,12,31).in_time_zone
+  AllTime         = ARange[NegativeForever, Forever]
 
-  ARange = ActsAsBitemporal::Range    # Alias to clarify we aren't using Ruby's Range
+  T = ->(t) { t ? t.strftime("%c %N %z") : "Forever" }
+  def inspect
 
-  extend ActiveSupport::Concern
-
-  
-  def bt_scope_constraint_violation?
-    bt_versions.vt_intersect(vtstart_at, vtend_at).tt_intersect(ttstart_at).exists?
+    "id: #{id}, vt:#{T[vtstart_at]}..#{T[vtend_at]}, tt:#{T[ttstart_at]}..#{T[ttend_at]}, scope: #{self[self.class.bt_scope_columns.first]}"
   end
 
-  # The new record can not have a valid time period that overlaps with any existing record for the same entity.
+  # Returns versions of this record satisfying various bitemporal constraints.
+  def bt_history(vtparams, ttparams)
+    bt_versions.vt_intersect(vtparams).tt_intersect(ttparams)
+  end
+
+  def bt_coerce_region(*args)
+    case args.size
+    when 0
+      [AllTime, Time.zone.now]
+    when 1
+      [ARange[*args], Time.zone.now]
+    when 2
+      case args.first
+      when Range
+        [args.first, args.last]
+      else
+        [ARange[*args], Time.zone.now]
+      end
+    when 3
+      [ARange[args.at(0),args.at(1)], args.at(2)]
+    else
+      raise ArgumentError
+    end
+  end
+  
+  def bt_scope_constraint_violation?
+    bt_history(*bt_coerce_region(vtstart_at, vtend_at, ttstart_at)).exists?
+  end
+
+  # The new record can not have a valid time period that overlaps 
+  # with any existing record for the same entity.
   def bt_scope_constraint
     if !new_record? and !bt_safe?
       errors[:base] << "invalid use of save on temporal records"
     elsif bt_scope_constraint_violation?
-      errors[:base] << "overlaps existing valid record"
+      if $DEBUG
+        errors[:base] << "overlaps existing valid record: #{bt_versions.vt_intersect(vtstart_at, vtend_at).tt_intersect(ttstart_at).to_a.inspect}"
+      else
+        errors[:base] << "overlaps existing valid record"
+      end
     end
   end
 
@@ -36,7 +72,8 @@ module ActsAsBitemporal
     self.bt_safe = false
   end
 
-  # Return relation that evalutes to all images of the current record.
+  # Return relation that evalutes to all versions (identical key attributes)
+  # of the current record.
   def bt_versions
     self.class.where(bt_scope_conditions)
   end
@@ -66,9 +103,8 @@ module ActsAsBitemporal
   #  tt_intersects?(Time.zone.now)
   #  tt_intersects?(Time.zone.now, Time.zone.now + 60)
   #  tt_intersects?(ARange.new(Time.zone.now, Time.zone.now + 60))
-  def tt_intersects?(instant_or_range, end_of_range=nil)
-    instant_or_range = ARange.new(instant_or_range, end_of_range) if end_of_range
-    tt_range.intersects?(instant_or_range)
+  def tt_intersects?(*args)
+    tt_range.intersects?(*args)
   end
 
   # Returns true if the valid time period intersects with the instant
@@ -120,6 +156,8 @@ module ActsAsBitemporal
     self.ttend_at ||= Forever
   end
 
+  # Returns true of the non-temporal attributes of this object are equal to the
+  # non-temporal attributes of other record.  This is test for value equality.
   def bt_equal?(other)
     bt_nontemporal_attributes == other.bt_nontemporal_attributes
   end
@@ -129,11 +167,30 @@ module ActsAsBitemporal
     if new_record?
       save(*args)
     elsif vtstart_at_changed? or vtend_at_changed?
-      vt_revise(vtstart_at: vtstart_at, vtend_at: vtend_at)
+      bt_revise(Hash[changes.map { |k,(oldv, newv)| [k,newv] }].merge(vtstart_at: vtstart_at, vtend_at: vtend_at))
     else
       bt_update_attributes( Hash[changes.map { |k,(oldv, newv)| [k,newv] }] )
     end
   end
+
+  def bt_clear(*args)
+    ActiveRecord::Base.transaction do
+      commit_time = Time.zone.now
+      bt_history(*bt_coerce_region(*args)).lock(true) do |overlap|
+        overlap.bt_finalize(commit_time)
+        yield overlap
+      end
+    end
+  end
+
+  def bt_delete4(*args)
+    bt_clear(*args) do |overlap|
+      overlap.vt_range.difference(start_at, end_at).each do |segment|
+        bt_dup(segment.begin, segment.end).bt_commit(commit_time)
+      end
+    end
+  end
+
 
   # Remove records from commit_time to vtend_at for this record.
   # Use commit_time as the transaction time if given.
@@ -174,8 +231,19 @@ module ActsAsBitemporal
   def bt_commit(commit_time=nil)
     if new_record?
       self.ttstart_at = commit_time
-      self.save
+      self.save!
     end
+  rescue
+    versions = self.class.all
+    warn "violation: #{bt_scope_constraint_violation?}"
+    warn "current:\n#{self.inspect}"
+    warn "visible:\n#{versions.map(&:inspect).join("\n")}"
+    warn "examined:\n#{bt_versions.vt_intersect(vtstart_at, vtend_at).tt_intersect(ttstart_at).map(&:inspect).join("\n")}"
+    warn "sql:\n#{bt_versions.vt_intersect(vtstart_at, vtend_at).tt_intersect(ttstart_at).to_sql}"
+    warn "vtstart_at:\n#{T[vtstart_at]}"
+    warn "vtend_at:\n#{T[vtend_at]}"
+    warn "count:\n#{bt_versions.vt_intersect(vtstart_at, vtend_at).tt_intersect(ttstart_at).count}"
+    raise
   end
 
   def bt_finalize(commit_time=Time.zone.now)
@@ -187,6 +255,7 @@ module ActsAsBitemporal
 
     ActiveRecord::Base.transaction do
       commit_time = Time.zone.now
+
       revision = bt_dup.tap do |rec|
         rec.bt_attributes = changes
       end
@@ -199,36 +268,42 @@ module ActsAsBitemporal
     end
   end
 
-  def vt_revise(attrs)
-    revised_attrs = attrs.dup
-    newstart  = (revised_attrs.delete(:vtstart_at) || vtstart_at).try(:to_time)
-    newend    = (revised_attrs.delete(:vtend_at) || vtend_at).try(:to_time)
+  def bt_revise(attrs)
+    revised_attrs = attrs.stringify_keys
+    newstart  = (revised_attrs.delete('vtstart_at') || vtstart_at).try(:in_time_zone)
+    newend    = (revised_attrs.delete('vtend_at') || vtend_at).try(:in_time_zone)
 
     raise ArgumentError, "invalid revision of non-current record" unless tt_forever?
 
+    result_list = []
+
     transaction_time = Time.zone.now
     ActiveRecord::Base.transaction do
-      overlapped = self.class.tt_forever.vt_intersect(newstart, newend).lock(true).to_a
-      bt_finalize(transaction_time) if overlapped.count > 0
-      overlapped.each do |rec|
-        if rec.vtstart_at < newstart
-          self.class.create!(rec.bt_nontemporal_attributes.merge(vtstart_at: rec.vtstart_at, vtend_at: newstart, ttstart_at: transaction_time))
+      bt_versions.tt_forever.vt_intersect(newstart, newend).lock(true).each do |overlapped|
+        # finalize the transaction for the record to be updated.
+        overlapped.bt_finalize(transaction_time)
+        self.ttend_at = transaction_time if overlapped.id = self.id
+
+        # persist the unchanged portions of the overlapped record.
+        overlapped.vt_range.difference(newstart, newend).each do |range|
+          overlapped.bt_dup(range.begin, range.end).bt_commit(transaction_time)
         end
 
-        if newend <= rec.vtend_at
-          self.class.create!(rec.bt_nontemporal_attributes.merge(vtstart_at: newend, vtend_at: rec.vtend_at, ttstart_at: transaction_time))
-        end
-
-        rec.bt_finalize(transaction_time)
+        # persist the updated portion of the overlapped record.
+        intersection = overlapped.vt_range.intersection(newstart, newend)
+        updated = overlapped.bt_dup(intersection.begin, intersection.end)
+        updated.bt_attributes = revised_attrs
+        updated.bt_commit(transaction_time)
+        result_list << updated
       end
-      self.class.create!(bt_nontemporal_attributes.merge(revised_attrs).merge(vtstart_at: newstart, vtend_at: newend, ttstart_at: transaction_time))
     end
+    result_list
   end
 
-  def vt_revise2(attrs)
+  def bt_revise2(attrs)
     revised_attrs = attrs.dup
-    newstart  = (revised_attrs.delete(:vtstart_at) || vtstart_at).try(:to_time)
-    newend    = (revised_attrs.delete(:vtend_at) || vtend_at).try(:to_time)
+    newstart  = (revised_attrs.delete(:vtstart_at) || vtstart_at).try(:to_time_in_current_zone)
+    newend    = (revised_attrs.delete(:vtend_at) || vtend_at).try(:to_time_in_current_zone)
     return self if vt_range.covers?(newstart, newend) and revised_attrs.empty?
 
     revised_attrs = bt_nontemporal_attributes.merge!(revised_attrs)
@@ -290,12 +365,14 @@ module ActsAsBitemporal
     # periods are considered half-open: [closed, open).
     #   arel_intersect(:vtstart_at, :vtend_at, Time.zone.now)
     #   arel_intersect(:ttstart_at, :ttend_at, Time.zone.parse("2014-01-01"), Time.zone.parse("2015-01-01"))
-    def arel_intersect(start_column, end_column, start_or_instant, range_end=nil)
+    def arel_intersect(start_column, end_column, start_or_instant_or_range, range_end=nil)
       table = self.arel_table
       if range_end
-        table[start_column].lt(range_end).and(table[end_column].gt(start_or_instant))
+        table[start_column].lt(range_end).and(table[end_column].gt(start_or_instant_or_range))
+      elsif Range === start_or_instant_or_range
+        table[start_column].lt(start_or_instant_or_range.end).and(table[end_column].gt(start_or_instant_or_range.begin))
       else
-        table[start_column].lteq(start_or_instant).and(table[end_column].gt(start_or_instant))
+        table[start_column].lteq(start_or_instant_or_range).and(table[end_column].gt(start_or_instant_or_range))
       end
     end
 
