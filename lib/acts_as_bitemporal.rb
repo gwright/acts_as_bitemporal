@@ -26,10 +26,17 @@ module ActsAsBitemporal
   end
 
   # Returns versions of this record satisfying various bitemporal constraints.
-  def bt_history(vtparams, ttparams)
-    bt_versions.vt_intersect(vtparams).tt_intersect(ttparams)
+  def bt_history(vtparams, ttparams=Time.zone.now)
+    bt_versions.vt_intersect(vtparams).tt_intersect(ttparams).order(:vtstart_at)
   end
 
+  # Convert arguments to pair of ActsAsBitemporal::Range instances.
+  #
+  #   bt_coerce_region                      # [AllTime, now]
+  #   bt_coerce_region(vt_range)            # [vt_range, now]
+  #   bt_coerce_region(vt_range, tt_range)  # [vt_range, tt_range]
+  #   bt_coerce_region(start, end)          # [start...end, now]
+  #   bt_coerce_region(start, end, time)    # [start...end, time]
   def bt_coerce_region(*args)
     case args.size
     when 0
@@ -173,51 +180,26 @@ module ActsAsBitemporal
     end
   end
 
-  def bt_clear(*args)
+  # Rewrite records within specified vtrange.
+  #
+  #  bt_delete
+  #
+  #  Returns array of records that were finalized.
+  def bt_delete(*args)
+    vt_range, commit_time = bt_coerce_region(*args)
     ActiveRecord::Base.transaction do
-      commit_time = Time.zone.now
-      bt_history(*bt_coerce_region(*args)).lock(true) do |overlap|
+      bt_history(vt_range).lock(true).map do |overlap|
         overlap.bt_finalize(commit_time)
-        yield overlap
-      end
-    end
-  end
 
-  def bt_delete4(*args)
-    bt_clear(*args) do |overlap|
-      overlap.vt_range.difference(start_at, end_at).each do |segment|
-        bt_dup(segment.begin, segment.end).bt_commit(commit_time)
-      end
-    end
-  end
-
-
-  # Remove records from commit_time to vtend_at for this record.
-  # Use commit_time as the transaction time if given.
-  def bt_delete(commit_time=nil)
-    commit_time ||= Time.zone.now
-    result = bt_delete3(commit_time, vtend_at, commit_time)
-    reload
-    result
-  end
-
-  # Remove records associated with the vt_range for this record.
-  # Use commit_time as the transaction time if given.
-  def bt_delete2(commit_time=nil)
-    return bt_delete3(vtstart_at, vtend_at, commit_time)
-  end
-
-  def bt_delete3(start_at, end_at, commit_time=nil)
-    ActiveRecord::Base.transaction do
-      commit_time ||= Time.zone.now
-      bt_versions.tt_forever.vt_intersect(start_at, end_at).order(:vtstart_at).each do |existing|
-        existing.bt_finalize(commit_time)
-        existing.vt_range.difference(start_at, end_at).each do |segment|
+        overlap.vt_range.difference(vt_range).each do |segment|
           bt_dup(segment.begin, segment.end).bt_commit(commit_time)
         end
+
+        (block_given? && yield(overlap, vt_range, commit_time)) || overlap
       end
+    end.tap do
+      self.ttend_at = commit_time 
     end
-    commit_time
   end
 
   # Duplicate the existing record but configure with new valid time range.
@@ -232,18 +214,8 @@ module ActsAsBitemporal
     if new_record?
       self.ttstart_at = commit_time
       self.save!
+      self
     end
-  rescue
-    versions = self.class.all
-    warn "violation: #{bt_scope_constraint_violation?}"
-    warn "current:\n#{self.inspect}"
-    warn "visible:\n#{versions.map(&:inspect).join("\n")}"
-    warn "examined:\n#{bt_versions.vt_intersect(vtstart_at, vtend_at).tt_intersect(ttstart_at).map(&:inspect).join("\n")}"
-    warn "sql:\n#{bt_versions.vt_intersect(vtstart_at, vtend_at).tt_intersect(ttstart_at).to_sql}"
-    warn "vtstart_at:\n#{T[vtstart_at]}"
-    warn "vtend_at:\n#{T[vtend_at]}"
-    warn "count:\n#{bt_versions.vt_intersect(vtstart_at, vtend_at).tt_intersect(ttstart_at).count}"
-    raise
   end
 
   def bt_finalize(commit_time=Time.zone.now)
@@ -253,19 +225,13 @@ module ActsAsBitemporal
   def bt_update_attributes(changes)
     return unless tt_forever?
 
-    ActiveRecord::Base.transaction do
-      commit_time = Time.zone.now
+    updated = bt_dup
+    updated.bt_attributes = changes
+    return unless changed? or bt_nontemporal_attributes != updated.bt_nontemporal_attributes
 
-      revision = bt_dup.tap do |rec|
-        rec.bt_attributes = changes
-      end
-
-      return unless changed? or bt_nontemporal_attributes != revision.bt_nontemporal_attributes
-
-      bt_finalize(commit_time)
-      revision.bt_commit(commit_time)
-      revision
-    end
+    bt_delete(vtstart_at, vtend_at) do |overlapped, vtrange, commit|
+      updated.bt_commit(commit)
+    end.last
   end
 
   def bt_revise(attrs)
@@ -275,48 +241,11 @@ module ActsAsBitemporal
 
     raise ArgumentError, "invalid revision of non-current record" unless tt_forever?
 
-    result_list = []
-
-    transaction_time = Time.zone.now
-    ActiveRecord::Base.transaction do
-      bt_versions.tt_forever.vt_intersect(newstart, newend).lock(true).each do |overlapped|
-        # finalize the transaction for the record to be updated.
-        overlapped.bt_finalize(transaction_time)
-        self.ttend_at = transaction_time if overlapped.id = self.id
-
-        # persist the unchanged portions of the overlapped record.
-        overlapped.vt_range.difference(newstart, newend).each do |range|
-          overlapped.bt_dup(range.begin, range.end).bt_commit(transaction_time)
-        end
-
-        # persist the updated portion of the overlapped record.
-        intersection = overlapped.vt_range.intersection(newstart, newend)
-        updated = overlapped.bt_dup(intersection.begin, intersection.end)
-        updated.bt_attributes = revised_attrs
-        updated.bt_commit(transaction_time)
-        result_list << updated
-      end
-    end
-    result_list
-  end
-
-  def bt_revise2(attrs)
-    revised_attrs = attrs.dup
-    newstart  = (revised_attrs.delete(:vtstart_at) || vtstart_at).try(:to_time_in_current_zone)
-    newend    = (revised_attrs.delete(:vtend_at) || vtend_at).try(:to_time_in_current_zone)
-    return self if vt_range.covers?(newstart, newend) and revised_attrs.empty?
-
-    revised_attrs = bt_nontemporal_attributes.merge!(revised_attrs)
-
-    ActiveRecord::Base.transaction do
-      commit_time = Time.zone.now
-      if bt_scope_constraint_violation?
-        bt_finalize(commit_time)
-        new_period = vt_range.merge(newstart, newend)
-        self.class.create(revised_attrs.merge(vtstart_at: new_period.begin, vtend_at: new_period.end, ttstart_at: commit_time))
-      else
-        self.class.create(revised_attrs.merge(vtstart_at: newstart, vtend_at: newend))
-      end
+    bt_delete(newstart, newend) do |overlapped, vtrange, transaction_time|
+      intersection = overlapped.vt_range.intersection(newstart, newend)
+      updated = overlapped.bt_dup(intersection.begin, intersection.end)
+      updated.bt_attributes = revised_attrs
+      updated.bt_commit(transaction_time)
     end
   end
 

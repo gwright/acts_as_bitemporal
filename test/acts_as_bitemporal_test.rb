@@ -319,7 +319,9 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     with_one_record do |bt_model|
       current_rec         = bt_model.first!
       current_rec_before  = current_rec.attributes
-      transaction_time    = current_rec.bt_delete
+
+      current_rec.bt_delete
+      transaction_time    = current_rec.ttend_at
       after_time          = Time.zone.now
 
       current_rec_after   = current_rec.reload
@@ -329,16 +331,8 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
       assert_equal current_rec_before['ttstart_at'],  current_rec_after.ttstart_at,   "ttstart_at unchanged"
       assert_equal transaction_time,                  current_rec_after.ttend_at,     "ttend_at changed to transaction time"
 
-      versions = current_rec.bt_versions.reject { |r| r == current_rec }
-
-      assert_equal 1, versions.count,     "only one other version"
-
-      revised_record = versions.first
-
-      assert_equal current_rec_before['vtstart_at'],  revised_record.vtstart_at
-      assert_equal transaction_time,                  revised_record.vtend_at
-      assert_equal transaction_time,                  revised_record.ttstart_at
-      assert_equal Forever,                           revised_record.ttend_at
+      versions = current_rec.bt_versions
+      assert_equal 1, versions.count,     "only one version"
 
     end
   end
@@ -373,7 +367,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
         assert_equal start_list.count, versions.count
 
         # apply change
-        deleted = base_record.bt_delete3( (base_date + del_range.first), del_range.last ? (base_date + del_range.last) : Forever )
+        deleted = base_record.bt_delete( (base_date + del_range.first), del_range.last ? (base_date + del_range.last) : Forever )
 
         assert deleted
 
@@ -453,7 +447,6 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
 
       beta.bt_attributes = changes
       assert beta.changes.empty?, "bt_attributes should ignore non-versioned attributes"
-
     end
 
   end
