@@ -5,6 +5,7 @@ require 'test/unit'
 require 'shoulda-context'
 
 Time.zone = "UTC"   # Force to UTC
+ActiveRecord::Base.time_zone_aware_attributes = true
 
 # this is to make absolutely sure we test this one, not the one
 # installed on the system.
