@@ -55,10 +55,10 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
 
   def current_time_assertions(record, transaction_bounds)
     assert transaction_bounds.covers?(record.vtstart_at),          "valid time started during create call"
-    assert_equal Forever, record.vtend_at,                            "valid time ends at Forever"
+    assert_equal Forever, record.vtend_at,                         "valid time ends at Forever"
 
-    assert_equal record.vtstart_at, record.ttstart_at,              "transaction started at vtstart_at"
-    assert_equal Forever, record.ttend_at,                            "transaction ends at Forever"
+    assert_equal record.vtstart_at, record.ttstart_at,             "transaction started at vtstart_at"
+    assert_equal Forever, record.ttend_at,                         "transaction ends at Forever"
   end
 
 
@@ -414,9 +414,9 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
 
         # apply change
         updated = base_record.bt_revise(
-          entity_id: 200,
-          vtstart_at: (base_date + upd_range.first.days), 
-          vtend_at:   upd_range.last ? (base_date + upd_range.last.days) : Forever
+          vtstart_at: (base_date + upd_range.first.days),
+          vtend_at: upd_range.last ? (base_date + upd_range.last.days) : Forever,
+          entity_id: 200
         )
 
         refute updated.empty?
