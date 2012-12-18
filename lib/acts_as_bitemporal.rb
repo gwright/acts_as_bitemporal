@@ -197,7 +197,7 @@ module ActsAsBitemporal
         overlap.bt_finalize(commit_time)
 
         overlap.vt_range.difference(vt_range).each do |segment|
-          bt_dup(segment.begin, segment.end).bt_commit(commit_time)
+          bt_dup(vtstart_at: segment.begin, vtend_at: segment.end).bt_commit(commit_time)
         end
 
         (block_given? && yield(overlap, vt_range, commit_time)) || overlap
@@ -208,11 +208,11 @@ module ActsAsBitemporal
   end
 
   # Duplicate the existing record but configure with new valid time range.
-  def bt_dup(vt_start=vtstart_at, vt_end=vtend_at, attributes={})
+  def bt_dup(attributes={})
     self.class.new(bt_nontemporal_attributes) do |rec|
-      rec.vtstart_at = vt_start
-      rec.vtend_at = vt_end
       rec.bt_attributes = attributes
+      rec.vtstart_at ||= vtstart_at
+      rec.vtend_at   ||= vtend_at
     end
   end
 
@@ -246,12 +246,12 @@ module ActsAsBitemporal
 
   def bt_revise(attrs={})
     attrs = attrs.stringify_keys
-    revision = bt_dup(attrs['vtstart_at'], attrs['vtend_at'], attrs)
+    revision = bt_dup(attrs)
 
     raise ArgumentError, "invalid revision of non-current record" unless tt_forever? or ttend_at.nil?
     bt_delete(revision.vtstart_at, revision.vtend_at) do |overlapped, vtrange, transaction_time|
       intersection = overlapped.vt_range.intersection(revision.vtstart_at, revision.vtend_at)
-      revision.bt_dup(intersection.begin, intersection.end).bt_commit(transaction_time)
+      revision.bt_dup(vtstart_at: intersection.begin, vtend_at: intersection.end).bt_commit(transaction_time)
     end
   end
 
@@ -289,7 +289,7 @@ module ActsAsBitemporal
   end
 
   def bt_attributes=(changes)
-    self.attributes = changes.stringify_keys.slice(*self.class.bt_versioned_columns)
+    self.attributes = changes.stringify_keys.slice(*self.class.bt_nonkey_columns)
   end
 
   private 
@@ -300,6 +300,11 @@ module ActsAsBitemporal
   end
 
   module ClassMethods
+
+    def bt_nonkey_columns
+      bt_versioned_columns + TemporalColumnNames
+    end
+
     # Generate arel expression that evaluates to true if the period specified by
     # _start_column_ and _end_column_ intersects with the instant or period. All
     # periods are considered half-open: [closed, open).

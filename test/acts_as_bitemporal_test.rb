@@ -443,7 +443,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
       assert_equal 'Beta', alpha.name
 
       beta = bt_model.create(name: "Beta", entity_id: 200)
-      changes = {id: 200, entity_id: 300, vtstart_at: 5, vtend_at: 6, ttstart_at: 7, ttend_at: 8}
+      changes = {id: 200, entity_id: 300}
 
       beta.bt_attributes = changes
       assert beta.changes.empty?, "bt_attributes should ignore non-versioned attributes"
