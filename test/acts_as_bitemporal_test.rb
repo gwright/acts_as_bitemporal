@@ -170,7 +170,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     end
   end
 
-  def test_bt_save_with_temporal_changes
+  def test_bt_commit_with_temporal_changes
     empty_database do |bt_model|
       record = bt_model.create!(entity_id: 1000, name: "One")
 
@@ -179,10 +179,10 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
       record.vtstart_at   = new_start = Time.zone.now - 1.day
       record.vtend_at     = new_end   = Time.zone.now + 1.day
       record.name         = "Two"
-      revised             = record.bt_save
+      revised             = record.bt_commit
       revision            = revised.first
 
-      assert_kind_of(bt_model, revision, "bt_save succeeded")
+      assert_kind_of(bt_model, revision, "bt_commit succeeded")
       assert_not_equal(record, revision, "revision returned")
 
       assert_equal ARange[record.ttstart_at, revision.ttstart_at], record.tt_range,   "old record transaction is closed"
@@ -250,7 +250,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     with_one_record do |bt_model|
       first             = bt_model.first
       original_attrs    = first.attributes
-      second            = first.bt_update_attributes(:name =>  "two")
+      second            = first.bt_revise(:name =>  "two")
 
       assert_equal 2,   first.bt_versions.count
 
@@ -258,13 +258,16 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     end
   end
 
-  def test_bt_update_attributes_with_superfluous_change
+  def test_bt_commit_with_superfluous_change
     with_one_record do |bt_model|
       first             = bt_model.first
       original_attrs    = first.attributes
-      second            = first.bt_update_attributes(:name =>  "one")
+
+      first.name = "one"
+      second            = first.bt_commit
+
       assert_equal 1,   first.bt_versions.count
-      assert_nil        second
+      assert_empty      second
     end
   end
 
@@ -274,7 +277,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
       original_attrs = first.attributes
 
       first.name = new_name = "Second"
-      revision = first.bt_save
+      revision = first.bt_commit.first
 
       assert_equal first.ttend_at, revision.ttstart_at,  "transaction times match"
 
@@ -335,10 +338,6 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
       assert_equal 1, versions.count,     "only one version"
 
     end
-  end
-
-  def test_bt_delete_with_future_records
-    skip("not implemented")
   end
 
   DeleteCases = [
@@ -403,6 +402,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
         start_list.each_with_index do |(start_offset, end_offset), index|
           bt_model.create!(
             entity_id: 100, 
+            name: "one",
             vtstart_at: base_date + start_offset.days, 
             vtend_at: end_offset ? base_date + end_offset.days : Forever
           )
@@ -416,10 +416,10 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
         updated = base_record.bt_revise(
           vtstart_at: (base_date + upd_range.first.days),
           vtend_at: upd_range.last ? (base_date + upd_range.last.days) : Forever,
-          entity_id: 200
+          name: "two"
         )
 
-        refute updated.empty?
+        assert_equal upd_list.size, updated.size, "update case #{index}: should have expected changes"
 
         assert_equal (upd_list.count + unchanged_list.count), versions.count, "#{index}, visible:\n#{versions.to_a.map(&:inspect).join("\n")}\nupdated:\n#{updated.to_a.map(&:inspect).join("\n")}\nerrors: #{updated.to_a.map { |u| u.errors.full_messages.inspect}}}"
 

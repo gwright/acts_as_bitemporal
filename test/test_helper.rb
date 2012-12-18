@@ -1,6 +1,7 @@
 require 'active_record'
 require 'active_support/test_case'
 require 'active_support/time'
+require 'active_support/core_ext/hash'
 require 'test/unit'
 require 'shoulda-context'
 

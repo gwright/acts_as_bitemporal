@@ -168,20 +168,52 @@ module ActsAsBitemporal
     self.ttend_at ||= Forever
   end
 
-  # Returns true if the non-temporal attributes of this object are equal to the
-  # non-temporal attributes of other record.  This is test for value equality.
-  def bt_equal?(other)
+  # same object                               equal?
+  # same                           id         ==
+  # same scope, values, timestamp             bt_equal?
+  # same scope, values, vtrange               bt_same_version?
+  # same scope, values                        bt_same_value?
+  # same scope                                bt_same_scope?
+
+  # Returns true if the scope attributes of this record are equal (==) to
+  # the scope attributes of other record. This test ignores differences
+  # between versioned attributes, temporal attributes, and the primary id
+  # column.
+  def bt_same_scope?(other)
+    bt_scope_attributes == other.bt_scope_attributes
+  end
+
+  # Returns true if the scope and versioned attributes are equal (==) to
+  # the attributes of other record. This test ignores differences
+  # between temporal attributes and the primary id column.
+  def bt_same_value?(other)
     bt_nontemporal_attributes == other.bt_nontemporal_attributes
   end
 
-  # Pushes changes to the database respecting bitemporal semantics.
-  def bt_save(*args)
+  # Returns true if the scope, versioned, and valid time attributes
+  # are equal (==) to the attributes of other record. This test ignores 
+  # differences between transaction time attributes and the primary id column.
+  def bt_same_version?(other)
+    bt_version_attributes == other.bt_version_attributes
+  end
+
+  # Commit the record as a new version for this scope. 
+  # 
+  # If the record is a new record, it is inserted into the table as long as
+  # its valid time range doesn't conflict with any existing records.
+  #
+  # If the record is a modification of an existing record, the changes 
+  # are applied as an update to all records that are covered by the valid 
+  # time range.
+  #
+  # If commit_time is provided it is used as the ttstart_at time for a
+  # new record.  It is ignored for updates.
+  def bt_commit(commit_time=nil)
     if new_record?
-      save(*args)
-    elsif vtstart_at_changed? or vtend_at_changed?
-      bt_revise(bt_nonkey_attributes)
+      self.ttstart_at = commit_time
+      self.save ? [self] : []
     else
-      bt_update_attributes( Hash[changes.map { |k,(oldv, newv)| [k,newv] }] )
+      bt_revise
     end
   end
 
@@ -189,7 +221,12 @@ module ActsAsBitemporal
   #
   #  bt_delete
   #
-  #  Returns array of records that were finalized.
+  # If no block is given, returns array of records that were finalized.
+  #
+  # If a block is given, the block is called once for each record that
+  # is finalized and the return values from these calls is returned.
+  # The block is passed the finalized record, the valid time range that
+  # is being finalized and the commit time for the transaction.
   def bt_delete(*args)
     vt_range, commit_time = bt_coerce_slice(*args)
     ActiveRecord::Base.transaction do
@@ -216,53 +253,26 @@ module ActsAsBitemporal
     end
   end
 
-  def bt_commit(commit_time=nil)
-    if new_record?
-      self.ttstart_at = commit_time
-      self.save!
-      self
-    elsif vtstart_at_changed? or vtend_at_changed?
-      bt_revise
-    elsif changed?
-      bt_update_attributes( Hash[changes.map { |k,(oldv, newv)| [k,newv] }] )
-    end
-  end
-
   def bt_finalize(commit_time=Time.zone.now)
     update_column(:ttend_at, commit_time)
   end
 
-  def bt_update_attributes(changes)
-    return unless tt_forever?
-
-    updated = bt_dup
-    updated.bt_attributes = changes
-    return unless changed? or bt_nontemporal_attributes != updated.bt_nontemporal_attributes
-
-    bt_delete(vtstart_at, vtend_at) do |overlapped, vtrange, commit|
-      updated.bt_commit(commit)
-    end.last
-  end
-
   def bt_revise(attrs={})
-    attrs = attrs.stringify_keys
+    raise ArgumentError, "invalid revision of non-current record" unless tt_forever? 
+
     revision = bt_dup(attrs)
 
-    raise ArgumentError, "invalid revision of non-current record" unless tt_forever? or ttend_at.nil?
+    return [] if !changed? and revision.bt_same_version?(self)
+
     bt_delete(revision.vtstart_at, revision.vtend_at) do |overlapped, vtrange, transaction_time|
       intersection = overlapped.vt_range.intersection(revision.vtstart_at, revision.vtend_at)
-      revision.bt_dup(vtstart_at: intersection.begin, vtend_at: intersection.end).bt_commit(transaction_time)
+      revision.bt_dup(vtstart_at: intersection.begin, vtend_at: intersection.end).bt_commit(transaction_time).first
     end
   end
 
   # Returns hash of the four temporal attributes.
   def bt_temporal_attributes
     attributes.slice(*TemporalColumnNames)
-  end
-
-  # Returns attribute hash excluding the four temporal attributes.
-  def bt_nontemporal_attributes
-    attributes.slice(*(self.class.bt_scope_columns + self.class.bt_versioned_columns))
   end
 
   # Returns attribute hash including just the scoped attributes.
@@ -275,9 +285,14 @@ module ActsAsBitemporal
     attributes.slice(*self.class.bt_versioned_columns)
   end
 
+  # Returns attribute hash excluding the four temporal attributes.
+  def bt_nontemporal_attributes
+    attributes.slice(*(self.class.bt_scope_columns + self.class.bt_versioned_columns))
+  end
+
   # Returns attribute hash including excluding the primary keys.
-  def bt_nonkey_attributes
-    attributes.slice(*(self.class.bt_versioned_columns + TemporalColumnNames))
+  def bt_version_attributes
+    attributes.tap { |a| a.delete('id'); a.delete('ttstart_at'); a.delete('ttend_at') }
   end
 
   # Returns attribute hash merged with other hash. Temporal attributes are excluded.
