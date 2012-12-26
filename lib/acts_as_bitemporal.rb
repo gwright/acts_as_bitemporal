@@ -26,7 +26,7 @@ module ActsAsBitemporal
   end
 
   # Returns versions of this record satisfying various bitemporal constraints.
-  def bt_history(vtparams, ttparams=nil)
+  def bt_history(vtparams=AllTime, ttparams=nil)
     if ttparams
       bt_versions.vt_intersect(vtparams).tt_intersect(ttparams).order(:vtstart_at)
     else
