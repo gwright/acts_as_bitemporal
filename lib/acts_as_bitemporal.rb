@@ -61,7 +61,7 @@ module ActsAsBitemporal
     when 2
       case args.first
       when Range
-        [args.first, args.last]
+        args
       else
         [ARange[*args], Time.zone.now]
       end
