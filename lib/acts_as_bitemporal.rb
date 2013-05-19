@@ -134,9 +134,8 @@ module ActsAsBitemporal
   #  vt_intersects?(Time.zone.now)
   #  vt_intersects?(Time.zone.now, Time.zone.now + 60)
   #  vt_intersects?(ARange.new(Time.zone.now, Time.zone.now + 60))
-  def vt_intersects?(instant_or_range, end_of_range=nil)
-    instant_or_range = ARange.new(instant_or_range, end_of_range) if end_of_range
-    vt_range.intersects?(instant_or_range)
+  def vt_intersects?(*args)
+    vt_range.intersects?(*args)
   end
 
   # Returns true if the transaction period is open ended.
