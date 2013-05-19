@@ -177,10 +177,12 @@ module ActsAsBitemporal
     self.ttend_at ||= Forever
   end
 
+  # Bitemporal Equality Tests
+  #
   # same object                               equal?
-  # same                           id         ==
+  # same ActiveRecord id                      ==
   # same scope, values, timestamp             bt_equal?
-  # same scope, values, vtrange               bt_same_version?
+  # same scope, values, vtrange               bt_same_snapshot?
   # same scope, values                        bt_same_value?
   # same scope                                bt_same_scope?
 
@@ -199,11 +201,12 @@ module ActsAsBitemporal
     bt_nontemporal_attributes == other.bt_nontemporal_attributes
   end
 
-  # Returns true if the scope, versioned, and valid time attributes
-  # are equal (==) to the attributes of other record. This test ignores 
-  # differences between transaction time attributes and the primary id column.
-  def bt_same_version?(other)
-    bt_version_attributes == other.bt_version_attributes
+  # Returns true if the two records represent an identical snapshot. That is,
+  # the scope, versioned, and valid time attributes are equal (==) to the 
+  # attributes of other record. This test ignores differences between 
+  # transaction time attributes and the primary id column.
+  def bt_same_snapshot?(other)
+    bt_snapshot_attributes == other.bt_snapshot_attributes
   end
 
   # Commit the record as a new version for this scope. 
@@ -271,7 +274,7 @@ module ActsAsBitemporal
 
     revision = bt_dup(attrs)
 
-    return [] if !changed? and revision.bt_same_version?(self)
+    return [] if !changed? and revision.bt_same_snapshot?(self)
 
     bt_delete(revision.vtstart_at, revision.vtend_at) do |overlapped, vtrange, transaction_time|
       intersection = overlapped.vt_range.intersection(revision.vtstart_at, revision.vtend_at)
@@ -300,7 +303,7 @@ module ActsAsBitemporal
   end
 
   # Returns attribute hash including excluding the primary keys.
-  def bt_version_attributes
+  def bt_snapshot_attributes
     attributes.tap { |a| a.delete('id'); a.delete('ttstart_at'); a.delete('ttend_at') }
   end
 
