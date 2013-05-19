@@ -139,7 +139,7 @@ module ActsAsBitemporal
     vt_range.intersects?(*args)
   end
 
-  # Returns true if the transaction period is open ended.
+  # Returns true if the record is active (i.e. transaction period is open).
   def tt_forever?
     ttend_at == Forever
   end
