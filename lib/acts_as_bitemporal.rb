@@ -11,7 +11,7 @@ module ActsAsBitemporal
   TemporalColumnNames = %w{vtstart_at vtend_at ttstart_at ttend_at}
 
   # Alias to clarify we aren't using Ruby's Range
-  ARange = ActsAsBitemporal::Range    
+  ARange = ActsAsBitemporal::Range
 
   # The timestamp used to signify an indefinite end of a time period.
   Forever         = Time.utc(9999,12,31).in_time_zone
@@ -71,12 +71,12 @@ module ActsAsBitemporal
       raise ArgumentError
     end
   end
-  
+
   def bt_scope_constraint_violation?
     bt_history(*bt_coerce_slice(vtstart_at, vtend_at, ttstart_at)).exists?
   end
 
-  # The new record can not have a valid time period that overlaps 
+  # The new record can not have a valid time period that overlaps
   # with any existing record for the same entity.
   def bt_scope_constraint
     if !new_record? and !bt_safe?
@@ -103,9 +103,9 @@ module ActsAsBitemporal
   # Arel expresstion to select records with same key attributes as this record.
   def bt_scope_conditions
     table = self.class.arel_table
-    self.class.bt_scope_columns.map do |key_attr| 
-      table[key_attr].eq(self[key_attr]) 
-    end.inject do |memo, condition| 
+    self.class.bt_scope_columns.map do |key_attr|
+      table[key_attr].eq(self[key_attr])
+    end.inject do |memo, condition|
       memo.and(condition)
     end
   end
@@ -202,20 +202,20 @@ module ActsAsBitemporal
   end
 
   # Returns true if the two records represent an identical snapshot. That is,
-  # the scope, versioned, and valid time attributes are equal (==) to the 
-  # attributes of other record. This test ignores differences between 
+  # the scope, versioned, and valid time attributes are equal (==) to the
+  # attributes of other record. This test ignores differences between
   # transaction time attributes and the primary id column.
   def bt_same_snapshot?(other)
     bt_snapshot_attributes == other.bt_snapshot_attributes
   end
 
-  # Commit the record as a new version for this scope. 
-  # 
+  # Commit the record as a new version for this scope.
+  #
   # If the record is a new record, it is inserted into the table as long as
   # its valid time range doesn't conflict with any existing records.
   #
-  # If the record is a modification of an existing record, the changes 
-  # are applied as an update to all records that are covered by the valid 
+  # If the record is a modification of an existing record, the changes
+  # are applied as an update to all records that are covered by the valid
   # time range.
   #
   # If commit_time is provided it is used as the ttstart_at time for a
@@ -252,7 +252,7 @@ module ActsAsBitemporal
         (block_given? && yield(overlap, vt_range, commit_time)) || overlap
       end
     end.tap do
-      self.ttend_at = commit_time 
+      self.ttend_at = commit_time
     end
   end
 
@@ -270,7 +270,7 @@ module ActsAsBitemporal
   end
 
   def bt_revise(attrs={})
-    raise ArgumentError, "invalid revision of non-current record" unless tt_forever? 
+    raise ArgumentError, "invalid revision of non-current record" unless tt_forever?
 
     revision = bt_dup(attrs)
 
@@ -319,7 +319,7 @@ module ActsAsBitemporal
     self.attributes = changes.stringify_keys.slice(*self.class.bt_nonkey_columns)
   end
 
-  private 
+  private
 
   # Used internally to prevent accidental use of AR methods that don't ensure bitemporal semantics.
   def bt_safe?
@@ -386,7 +386,7 @@ module ActsAsBitemporal
     #   bt_intersect                # => selects records valid and active now.
     #   tt_intersect("2013-01-01")  # => selects records active on January 1, 2013 at 00:00:00.
     #   bt_intersect("2013-01-01", "2013-01-02")  # => selects records valid on Jan 1 at midnight but not known until Jan 2 at midnight.
-    #   bt_intersect("2013-01-01", "2013-01-02", "2013-02-01", Forever)  
+    #   bt_intersect("2013-01-01", "2013-01-02", "2013-02-01", Forever)
     #       # => selects records valid on Jan 1st but not known until after Feb 1 at midnight.
     #   bt_intersect(bt_record)     # => selects records valid and active while bt_record is also valid and active.
     def bt_intersect(*args)
@@ -457,7 +457,7 @@ module ActsAsBitemporal
     def bt_build(attrs={})
       transaction_time = Time.zone.now
       build(attrs.reverse_merge(
-        vtstart_at: nil, vtend_at: Forever, 
+        vtstart_at: nil, vtend_at: Forever,
         ttstart_at: nil, ttend_at: Forever
       ))
     end
