@@ -25,7 +25,17 @@ module ActsAsBitemporal
     "id: #{id}, vt:#{T[vtstart_at]}..#{T[vtend_at]}, tt:#{T[ttstart_at]}..#{T[ttend_at]}, scope: #{self[self.class.bt_scope_columns.first]}"
   end
 
-  # Returns versions of this record satisfying various bitemporal constraints.
+  # Returns versions of this record that have a bitemporal scope that intersects
+  # with the specified bitemporal scope.
+  #
+  #    bt_history                     # => returns all versions of this record that are active
+  #    bt_history(Time.zone.now)      # => returns all versions of this record that are active and valid now
+  #
+  #    bt_history(Time.zone.now, Time.zone.now + 30.days)
+  #      # => returns all versions of this record that are active and valid within the next 30 days
+  #
+  #    bt_history((Time.zone.now...Time.zone.now + 30.days), "2011-01-01")
+  #      # => returns all versions of this record that were active on January 1st, 2011 and are valid within the next 30 days
   def bt_history(vtparams=AllTime, ttparams=nil)
     if ttparams
       bt_versions.vt_intersect(vtparams).tt_intersect(ttparams).order(:vtstart_at)
