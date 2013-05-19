@@ -198,7 +198,7 @@ module ActsAsBitemporal
   # the attributes of other record. This test ignores differences
   # between temporal attributes and the primary id column.
   def bt_same_value?(other)
-    bt_nontemporal_attributes == other.bt_nontemporal_attributes
+    bt_value_attributes == other.bt_value_attributes
   end
 
   # Returns true if the two records represent an identical snapshot. That is,
@@ -258,7 +258,7 @@ module ActsAsBitemporal
 
   # Duplicate the existing record but configure with new valid time range.
   def bt_dup(attributes={})
-    self.class.new(bt_nontemporal_attributes) do |rec|
+    self.class.new(bt_value_attributes) do |rec|
       rec.bt_attributes = attributes
       rec.vtstart_at ||= vtstart_at
       rec.vtend_at   ||= vtend_at
@@ -298,7 +298,7 @@ module ActsAsBitemporal
   end
 
   # Returns attribute hash excluding the four temporal attributes.
-  def bt_nontemporal_attributes
+  def bt_value_attributes
     attributes.slice(*(self.class.bt_scope_columns + self.class.bt_versioned_columns))
   end
 
@@ -312,7 +312,7 @@ module ActsAsBitemporal
   def bt_attributes_merge(updates)
     updates = updates.stringify_keys
 
-    bt_nontemporal_attributes.merge( updates.slice(*self.class.bt_versioned_columns) )
+    bt_value_attributes.merge( updates.slice(*self.class.bt_versioned_columns) )
   end
 
   def bt_attributes=(changes)
