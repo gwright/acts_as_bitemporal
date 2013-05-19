@@ -1,8 +1,6 @@
 # encoding: utf-8
 require "acts_as_bitemporal/version"
-require "acts_as_bitemporal/version"
 require "acts_as_bitemporal/range"
-require 'active_support'
 require 'active_support/time'
 require 'active_record'
 
@@ -11,6 +9,7 @@ module ActsAsBitemporal
 
   # Columns to be managed by ActsAsBitemporal
   TemporalColumnNames = %w{vtstart_at vtend_at ttstart_at ttend_at}
+
   # Alias to clarify we aren't using Ruby's Range
   ARange = ActsAsBitemporal::Range    
 
@@ -20,8 +19,8 @@ module ActsAsBitemporal
   AllTime         = ARange[NegativeForever, Forever]
 
   T = ->(t) { t ? t.strftime("%c %N %z") : "Forever" }
-  def inspect
 
+  def inspect
     "id: #{id}, vt:#{T[vtstart_at]}..#{T[vtend_at]}, tt:#{T[ttstart_at]}..#{T[ttend_at]}, scope: #{self[self.class.bt_scope_columns.first]}"
   end
 
