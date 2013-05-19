@@ -149,7 +149,7 @@ module ActsAsBitemporal
   end
 
   # Returns true if the transaction and valid periods are both open ended.
-  def forever?
+  def bt_forever?
     vt_forever? and tt_forever?
   end
 
