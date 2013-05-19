@@ -18,11 +18,11 @@ Gem::Specification.new do |gem|
   gem.require_paths = ["lib"]
   gem.add_dependency 'activerecord'
   gem.add_dependency 'activesupport'
-  gem.add_development_dependency 'debugger'
   gem.add_development_dependency 'sqlite3'
   gem.add_development_dependency 'pg'
   gem.add_development_dependency 'shoulda-context'
   gem.add_development_dependency 'autotest'
+  gem.add_development_dependency 'ZenTest', '~> 4.9.0'
   gem.add_development_dependency 'autotest-standalone'
   gem.add_development_dependency 'autotest-fsevent'
   gem.add_development_dependency 'autotest-growl'
