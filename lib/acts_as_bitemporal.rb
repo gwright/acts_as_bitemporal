@@ -72,6 +72,7 @@ module ActsAsBitemporal
     end
   end
 
+  # Does this record temporally intersect with an existing version of this record?
   def bt_scope_constraint_violation?
     bt_history(*bt_coerce_slice(vtstart_at, vtend_at, ttstart_at)).exists?
   end
