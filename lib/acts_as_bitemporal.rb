@@ -18,6 +18,7 @@ module ActsAsBitemporal
   NegativeForever = Time.utc(1000,12,31).in_time_zone
   AllTime         = ARange[NegativeForever, Forever]
 
+  # A lambda to format timestamps.
   T = ->(t) { t ? t.strftime("%c %N %z") : "Forever" }
 
   def inspect
