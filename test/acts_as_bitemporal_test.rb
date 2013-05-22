@@ -306,9 +306,10 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     end
 
     # Convenience method
-    assert       current.forever?
+    assert       current.bt_forever?
 
     # Revised previous record
+    # XXX
     #revised = current.bt_versions.tt_current.vt_intersect(original_attrs['vtstart_at']).first!
     #assert_equal original_attrs['vtstart_at'],  revised.vtstart_at,       "original valid start"
     #assert_equal transaction_time,              revised.vtend_at,         "transaction valid end"
