@@ -228,6 +228,12 @@ module ActsAsBitemporal
     update_column(:ttend_at, commit_time)
   end
 
+  # Revise this record by finalizing the current version and saving the new version.
+  # An array of new records are returned. When only non-temporal attributes are
+  # revised, the array will contain just a single record.
+  #
+  #     bt_revise(attr1: 'new value')
+  # XXX Should detect fragmented period and coalece in revision.
   def bt_revise(attrs={})
     raise ArgumentError, "invalid revision of non-current record" unless tt_forever?
 
@@ -428,12 +434,16 @@ module ActsAsBitemporal
       end
     end
 
-    # Selects records valid right now (active or inactive).
+    # Selects records valid right now (active or inactive). The result can be
+    # considered an audit trail of the record showing all the changes that
+    # have been recorded in the table along the transaction time axis.
     def vt_current
       vt_intersect()
     end
 
-    # Selects records active right now (valid or not).
+    # Selects records active right now (valid or not). The result can be
+    # considered a history of the real world record showing changes that
+    # have been recorded in the table along the valid time axis.
     def tt_current
       tt_intersect()
     end
@@ -453,6 +463,38 @@ module ActsAsBitemporal
 
     def tt_forever
       where(:ttend_at => Forever)
+    end
+
+    Tokens = ('A'..'Z').to_a.join
+    def bt_ascii(detail=false)
+      final = ""
+
+      result = order(bt_scope_columns)
+      records = result.group_by { |r| r.bt_scope_attributes }
+      vt_ticks = records.map { |scope, list| list.map { |x| [x.vtstart_at, x.vtend_at]} }.flatten.uniq.sort
+
+      row = 0
+      records.each_with_index do |(scope, list), index|
+        tt_ticks = list.map { |x| [x.ttstart_at, x.ttend_at]}.flatten.uniq.sort
+        picture = Array.new(tt_ticks.size) { " " * vt_ticks.size }
+
+        list.sort_by { |r| r.ttstart_at }.each_with_index do |record, version|
+          vstart = vt_ticks.index(record.vtstart_at)
+          vend   = vt_ticks.index(record.vtend_at)
+          tstart = tt_ticks.index(record.ttstart_at)
+          tend   = tt_ticks.index(record.ttend_at)
+          #warn "start,end,tstart,tend,len = #{[row, vstart, vend, tstart, tend,len = (vend - vstart + 1), version.to_s * len].inspect}"
+
+          (tstart..tend).each do |tindex|
+            span = Tokens[version] * (vend - vstart + 1) 
+
+            picture[tindex][vstart..vend] = span
+          end
+        end
+        final << picture.each_with_index.map { |row, rindex| "%d%s: %s" % [index, detail ? tt_ticks[rindex] : "", row] }.join("\n")
+        final << "\n"
+      end
+      final
     end
 
     # Verify bitemporal key constraints
@@ -499,6 +541,37 @@ module ActsAsBitemporal
 end
 
 class << ActiveRecord::Base
+
+  # Enable bitemporal controls on this table. By default, bitemporal
+  # constraints will be scoped by any foreign keys in the table,
+  # which are detected by looking for column names ending in '_id'.
+  #
+  # The scope can be changed from the default with the following
+  # options:
+  #
+  #     :scope => [:col1, :col2]  # sets scope to named columns
+  #     :for => Model             # sets scope to foreign_key for Model
+  #
+  # A model configured with acts_as_bitemporal will have the following
+  # additional class methods:
+  #
+  # bt_value_columns        # the columns considered when versioning the model
+  # bt_scope_columns        # the columns that uniquely identify the model scope
+  # bt_versioned_columns    # the value columns with bt_scope_columns excluded
+  #
+  # The 'id' and 'type' columns are ignored by acts_as_bitemporal.
+  #
+  # The normal ActiveRecord timestamp columns should not be defined on
+  # an acts_as_bitemporal table. Instead the bitemporal timestamps should
+  # be defined and are # maintained by acts_as_bitemporal:
+  #
+  #   vtstart_at
+  #   vtend_at
+  #   ttstart_at
+  #   ttend_at
+  #
+  # The table definition helper, bt_timestamps, is provided to easily add
+  # these timestamps.
   def acts_as_bitemporal(*args)
     options = args.extract_options!
     bt_exclude_columns = %w{id type}    # AR maintains these columns

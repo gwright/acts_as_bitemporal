@@ -51,7 +51,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
       current_time_assertions(instance, bounds)
     end
   end
- 
+
   def test_current_time_new_then_save_with_no_conflicts
     empty_database do |bt_model|
       instance, bounds = capture_transaction_bounds do
@@ -121,7 +121,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     empty_database do |bt_model|
       instance = bt_model.create!(entity_attributes(vtstart_at: base_date, vtend_at: base_date + 1))
 
-      assert_raises(ActiveRecord::RecordInvalid) { 
+      assert_raises(ActiveRecord::RecordInvalid) {
         # Attempt to create a valid period conflict for the defined scope.
         bt_model.create!(entity_attributes(name: "two", vtstart_at: base_date, vtend_at: base_date + 1) )
       }
@@ -141,7 +141,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     empty_database do |bt_model|
       instance = bt_model.create!(entity_attributes(vtstart_at: base_date, vtend_at: base_date + 1))
 
-      assert_raises(ActiveRecord::RecordInvalid) { 
+      assert_raises(ActiveRecord::RecordInvalid) {
         # Attempt to create a valid period conflict for the defined scope.
         record = bt_model.new(entity_attributes(name: "two", vtstart_at: base_date, vtend_at: base_date + 1) )
         record.save!
@@ -149,7 +149,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
 
       # This record doesn't conflict with the existing valid time periods.
       instance2, bounds = capture_transaction_bounds do
-        bt_model.new(entity_attributes(name: "two", vtstart_at: base_date + 1, vtend_at: base_date + 2)).tap do |r| 
+        bt_model.new(entity_attributes(name: "two", vtstart_at: base_date + 1, vtend_at: base_date + 2)).tap do |r|
           r.save!
         end
       end
@@ -228,7 +228,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
   end
 
   def new_record_assertions(record, now_time=Time.zone.now, transaction_time=nil)
-    # Test valid time 
+    # Test valid time
     assert_equal Forever, record.vtend_at,                                     "should be valid forever"
     assert (record.vtstart_at...(record.vtend_at)).cover?(now_time),           "should be valid now"
     refute (record.vtstart_at...(record.vtend_at)).cover?(now_time - 24*60*60),"should not be valid yesterday"
@@ -306,7 +306,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
 
     # Newest version
     assert_equal original_attrs['vtstart_at'], current.vtstart_at,    "#{prefix}no changes to valid start"
-    assert_equal original_attrs['vtend_at'],   current.vtend_at ,     "#{prefix}no changes to valid end" 
+    assert_equal original_attrs['vtend_at'],   current.vtend_at ,     "#{prefix}no changes to valid end"
     assert_equal transaction_time, current.ttstart_at,                "#{prefix}transaction times match"
     assert                         current.tt_forever?,               "#{prefix}transaction valid until changed"
 
@@ -359,7 +359,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     [ [[2,nil]],           [3,nil],    [ [2,3]]],
     [ [[2,nil]],           [3,5],      [ [2,3], [5,nil]]]
   ]
-  
+
   def test_delete_cases
     DeleteCases.each_with_index do |(start_list,  del_range, result_list), index|
       empty_database do |bt_model|
@@ -402,7 +402,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     [ [[2,nil]],           [3,nil],    [ [3,nil]              ], [[2,3]          ]],
     [ [[2,nil]],           [3,5],      [ [3,5]                ], [[2,3], [5, nil]]]
   ]
-  
+
   def test_update2_cases
     Update2Cases.each_with_index do |(start_list,  upd_range, upd_list, unchanged_list), index|
       empty_database do |bt_model|
@@ -411,9 +411,9 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
         # Fill databsae
         start_list.each_with_index do |(start_offset, end_offset), index|
           bt_model.create!(
-            entity_id: 100, 
+            entity_id: 100,
             name: "one",
-            vtstart_at: base_date + start_offset.days, 
+            vtstart_at: base_date + start_offset.days,
             vtend_at: end_offset ? base_date + end_offset.days : Forever
           )
         end
@@ -467,18 +467,34 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     { entity_id: 1, name: 'first', vtstart_at: '2010-01-01', vtend_at: '2010-02-01', ttstart_at: '2010-01-01', ttend_at: '2010-02-01'},
     { entity_id: 1, name: 'second', vtstart_at: '2010-02-01', vtend_at: '2010-03-01', ttstart_at: '2010-02-01', ttend_at: Timestamp1 },
     { entity_id: 1, name: 'third', vtstart_at: '2010-03-01', ttstart_at: Timestamp1 },
-    { entity_id: 2, name: 'first Alternate', vtstart_at: '2010-01-01', vtend_at: '2010-02-01' },
+    { entity_id: 2, name: 'first Alternate', vtstart_at: '2010-01-01'},
   ]
+  SampleMap = <<MAP
+0: AA
+0: ABB
+0:  BCC
+0:   CC
+1: AAAA
+1: AAAA
+MAP
 
   def test_bt_current
     with_records Sample do |bt_model|
-      assert_equal 1, bt_model.bt_current.size
-      assert_equal 'third', bt_model.bt_current.first.name
+      assert_equal SampleMap, bt_model.unscoped.bt_ascii
 
-      assert_equal 'second', bt_model.bt_current('2010-02-01').first.name, "bt_current with instant argument"
+      entity1 = bt_model.where(entity_id: 1)
+
+      assert_equal 3, entity1.size
+
+      assert_equal 1, entity1.bt_current.size
+      assert_equal 'third', entity1.first.name
+
+      assert_equal 1, entity1.bt_current.size
+      assert_equal 'second', entity1.bt_current('2010-02-01').first.name, "bt_current with instant argument"
+
     end
   end
-        
+
 
 end
 
