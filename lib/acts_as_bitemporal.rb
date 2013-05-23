@@ -439,9 +439,8 @@ module ActsAsBitemporal
     end
 
     # Selects records valid and active right now.
-    def bt_current
-      now = Time.zone.now
-      vt_intersect(now).tt_intersect(now)
+    def bt_current(instant=Time.zone.now)
+      vt_intersect(instant).tt_intersect(instant)
     end
 
     def bt_current!

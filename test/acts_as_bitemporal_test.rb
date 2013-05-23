@@ -20,6 +20,15 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     end
   end
 
+  def with_records(records, options={})
+    empty_database(options) do |bt_model|
+      records.each do |r|
+        bt_model.new(r).save!
+      end
+      yield bt_model
+    end
+  end
+
   def capture_transaction_bounds
     before = Time.zone.now
     result = yield
@@ -450,6 +459,24 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
       assert beta.changes.empty?, "bt_attributes should ignore non-versioned attributes"
     end
 
+  end
+
+  Timestamp1 = Time.zone.now
+
+  Sample = [
+    { entity_id: 1, name: 'first', vtstart_at: '2010-01-01', vtend_at: '2010-02-01', ttstart_at: '2010-01-01', ttend_at: '2010-02-01'},
+    { entity_id: 1, name: 'second', vtstart_at: '2010-02-01', vtend_at: '2010-03-01', ttstart_at: '2010-02-01', ttend_at: Timestamp1 },
+    { entity_id: 1, name: 'third', vtstart_at: '2010-03-01', ttstart_at: Timestamp1 },
+    { entity_id: 2, name: 'first Alternate', vtstart_at: '2010-01-01', vtend_at: '2010-02-01' },
+  ]
+
+  def test_bt_current
+    with_records Sample do |bt_model|
+      assert_equal 1, bt_model.bt_current.size
+      assert_equal 'third', bt_model.bt_current.first.name
+
+      assert_equal 'second', bt_model.bt_current('2010-02-01').first.name, "bt_current with instant argument"
+    end
   end
         
 
