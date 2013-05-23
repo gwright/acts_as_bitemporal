@@ -15,7 +15,11 @@ module ActsAsBitemporal
 
   # The timestamp used to signify an indefinite end of a time period.
   Forever         = Time.utc(9999,12,31).in_time_zone
+
+  # The timestamp used to signify an indefinite start of a time period.
   NegativeForever = Time.utc(1000,12,31).in_time_zone
+
+  # A Range that represents all time.
   AllTime         = ARange[NegativeForever, Forever]
 
   # A lambda to format timestamps.
@@ -44,71 +48,10 @@ module ActsAsBitemporal
     end
   end
 
-  # Coerce arguments to a standard format for a slice of valid time records
-  # represented by a valid time range and a transaction time instant.
-  #
-  #   bt_coerce_slice                      # [AllTime, now]
-  #   bt_coerce_slice(vt_range)            # [vt_range, now]
-  #   bt_coerce_slice(vt_range, tt_range)  # [vt_range, tt_range]
-  #   bt_coerce_slice(start, end)          # [start...end, now]
-  #   bt_coerce_slice(start, end, time)    # [start...end, time]
-  def bt_coerce_slice(*args)
-    case args.size
-    when 0
-      [AllTime, Time.zone.now]
-    when 1
-      [ARange[*args], Time.zone.now]
-    when 2
-      case args.first
-      when Range
-        args
-      else
-        [ARange[*args], Time.zone.now]
-      end
-    when 3
-      [ARange[args.at(0),args.at(1)], args.at(2)]
-    else
-      raise ArgumentError
-    end
-  end
-
-  # Does this record temporally intersect with an existing version of this record?
-  def bt_scope_constraint_violation?
-    bt_history(*bt_coerce_slice(vtstart_at, vtend_at, ttstart_at)).exists?
-  end
-
-  # The new record can not have a valid time period that overlaps
-  # with any existing record for the same entity.
-  def bt_scope_constraint
-    if !new_record? and !bt_safe?
-      errors[:base] << "invalid use of save on temporal records"
-    elsif bt_scope_constraint_violation?
-      if $DEBUG
-        errors[:base] << "overlaps existing valid record: #{bt_versions.vt_intersect(vtstart_at, vtend_at).tt_intersect(ttstart_at).to_a.inspect}"
-      else
-        errors[:base] << "overlaps existing valid record"
-      end
-    end
-  end
-
-  def bt_after_commit
-    self.bt_safe = false
-  end
-
   # Return relation that evalutes to all versions (identical key attributes)
   # of the current record.
   def bt_versions
     self.class.where(bt_scope_conditions)
-  end
-
-  # Arel expresstion to select records with same key attributes as this record.
-  def bt_scope_conditions
-    table = self.class.arel_table
-    self.class.bt_scope_columns.map do |key_attr|
-      table[key_attr].eq(self[key_attr])
-    end.inject do |memo, condition|
-      memo.and(condition)
-    end
   end
 
   # Returns valid time period represented as an ActsAsBitemporal::Range.
@@ -123,18 +66,20 @@ module ActsAsBitemporal
 
   # Returns true if the transaction period intersects with the instant
   # or period specified by the arguments.
-  #  tt_intersects?(Time.zone.now)
-  #  tt_intersects?(Time.zone.now, Time.zone.now + 60)
-  #  tt_intersects?(ARange.new(Time.zone.now, Time.zone.now + 60))
+  #
+  #     tt_intersects?(Time.zone.now)
+  #     tt_intersects?(Time.zone.now, Time.zone.now + 60)
+  #     tt_intersects?(ARange.new(Time.zone.now, Time.zone.now + 60))
   def tt_intersects?(*args)
     tt_range.intersects?(*args)
   end
 
   # Returns true if the valid time period intersects with the instant
   # or period specified by the arguments.
-  #  vt_intersects?(Time.zone.now)
-  #  vt_intersects?(Time.zone.now, Time.zone.now + 60)
-  #  vt_intersects?(ARange.new(Time.zone.now, Time.zone.now + 60))
+  #
+  #     vt_intersects?(Time.zone.now)
+  #     vt_intersects?(Time.zone.now, Time.zone.now + 60)
+  #     vt_intersects?(ARange.new(Time.zone.now, Time.zone.now + 60))
   def vt_intersects?(*args)
     vt_range.intersects?(*args)
   end
@@ -143,6 +88,7 @@ module ActsAsBitemporal
   def tt_forever?
     ttend_at == Forever
   end
+  alias active? tt_forever?
 
   # Returns true if the valid period is open ended.
   def vt_forever?
@@ -172,7 +118,7 @@ module ActsAsBitemporal
 
   def complete_bt_timestamps
     transaction_time = ttstart_at || Time.zone.now
-    
+
     self.ttstart_at ||= transaction_time
     self.ttend_at ||= Forever
 
@@ -333,6 +279,67 @@ module ActsAsBitemporal
   end
 
   private
+
+  # Arel expresstion to select records with same key attributes as this record.
+  def bt_scope_conditions
+    table = self.class.arel_table
+    self.class.bt_scope_columns.map do |key_attr|
+      table[key_attr].eq(self[key_attr])
+    end.inject do |memo, condition|
+      memo.and(condition)
+    end
+  end
+
+  # Does this record temporally intersect with an existing version of this record?
+  def bt_scope_constraint_violation?
+    bt_history(*bt_coerce_slice(vtstart_at, vtend_at, ttstart_at)).exists?
+  end
+
+  # The new record can not have a valid time period that overlaps
+  # with any existing record for the same entity.
+  def bt_scope_constraint
+    if !new_record? and !bt_safe?
+      errors[:base] << "invalid use of save on temporal records"
+    elsif bt_scope_constraint_violation?
+      if $DEBUG
+        errors[:base] << "overlaps existing valid record: #{bt_versions.vt_intersect(vtstart_at, vtend_at).tt_intersect(ttstart_at).to_a.inspect}"
+      else
+        errors[:base] << "overlaps existing valid record"
+      end
+    end
+  end
+
+  def bt_after_commit
+    self.bt_safe = false
+  end
+
+  # Coerce arguments to a standard format for a slice of valid time records
+  # represented by a valid time range and a transaction time instant.
+  #
+  #   bt_coerce_slice                      # [AllTime, now]
+  #   bt_coerce_slice(vt_range)            # [vt_range, now]
+  #   bt_coerce_slice(vt_range, tt_range)  # [vt_range, tt_range]
+  #   bt_coerce_slice(start, end)          # [start...end, now]
+  #   bt_coerce_slice(start, end, time)    # [start...end, time]
+  def bt_coerce_slice(*args)
+    case args.size
+    when 0
+      [AllTime, Time.zone.now]
+    when 1
+      [ARange[*args], Time.zone.now]
+    when 2
+      case args.first
+      when Range
+        args
+      else
+        [ARange[*args], Time.zone.now]
+      end
+    when 3
+      [ARange[args.at(0),args.at(1)], args.at(2)]
+    else
+      raise ArgumentError
+    end
+  end
 
   # Used internally to prevent accidental use of AR methods that don't ensure bitemporal semantics.
   def bt_safe?
