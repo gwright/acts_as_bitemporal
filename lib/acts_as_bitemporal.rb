@@ -514,7 +514,7 @@ class << ActiveRecord::Base
     elsif self.bt_scope_columns = options.delete(:scope)
       self.bt_scope_columns = Array(bt_scope_columns).map(&:to_s)
     else
-      self.bt_scope_columns = self.column_names.grep /_id/
+      self.bt_scope_columns = self.column_names.grep /_id\z/
     end
 
     self.bt_value_columns = self.column_names - ActsAsBitemporal::TemporalColumnNames - bt_exclude_columns
