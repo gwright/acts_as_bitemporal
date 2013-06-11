@@ -5,7 +5,7 @@ require 'active_support/time'
 require 'active_record'
 
 module ActsAsBitemporal
-  extend ActiveSupport::Concern
+  extend ActiveSupport::Concern  # XXX probably not needed
 
   # Columns to be managed by ActsAsBitemporal
   TemporalColumnNames = %w{vtstart_at vtend_at ttstart_at ttend_at}
@@ -428,7 +428,7 @@ module ActsAsBitemporal
           vt_intersect(instant).tt_intersect(instant)
         end
       when 2
-        vt_intersect(args.at(0)).tt_intersect(args_at(1))
+        vt_intersect(args.at(0)).tt_intersect(args.at(1))
       when 4
         where(arel_bt_intersect(*args))
       end
