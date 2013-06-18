@@ -475,24 +475,24 @@ module ActsAsBitemporal
 
       row = 0
       records.each_with_index do |(scope, list), index|
-        tt_ticks = list.map { |x| [x.ttstart_at, x.ttend_at]}.flatten.uniq.sort
-        picture = Array.new(tt_ticks.size) { " " * vt_ticks.size }
+      tt_ticks = list.map { |x| [x.ttstart_at, x.ttend_at]}.flatten.uniq.sort
+      picture = Array.new(tt_ticks.size) { " " * vt_ticks.size }
 
-        list.sort_by { |r| r.ttstart_at }.each_with_index do |record, version|
-          vstart = vt_ticks.index(record.vtstart_at)
-          vend   = vt_ticks.index(record.vtend_at)
-          tstart = tt_ticks.index(record.ttstart_at)
-          tend   = tt_ticks.index(record.ttend_at)
-          #warn "start,end,tstart,tend,len = #{[row, vstart, vend, tstart, tend,len = (vend - vstart + 1), version.to_s * len].inspect}"
+      list.sort_by { |r| r.ttstart_at }.each_with_index do |record, version|
+        vstart = vt_ticks.index(record.vtstart_at)
+        vend   = vt_ticks.index(record.vtend_at)
+        tstart = tt_ticks.index(record.ttstart_at)
+        tend   = tt_ticks.index(record.ttend_at)
+        #warn "start,end,tstart,tend,len = #{[row, vstart, vend, tstart, tend,len = (vend - vstart + 1), version.to_s * len].inspect}"
 
-          (tstart..tend).each do |tindex|
-            span = Tokens[version] * (vend - vstart + 1) 
+        (tstart..tend).each do |tindex|
+          span = Tokens[version] * (vend - vstart + 1) 
 
-            picture[tindex][vstart..vend] = span
-          end
+          picture[tindex][vstart..vend] = span
         end
-        final << picture.each_with_index.map { |row, rindex| "%d%s: %s" % [index, detail ? tt_ticks[rindex] : "", row] }.join("\n")
-        final << "\n"
+      end
+      final << picture.each_with_index.map { |row, rindex| "%d%s: %s" % [index, detail ? tt_ticks[rindex] : "", row] }.join("\n")
+      final << "\n"
       end
       final
     end
@@ -601,7 +601,7 @@ class << ActiveRecord::Base
 
   end
 
-  def has_many_bitemporal(collection)
+  def has_many_bitemporal(collection, options={})
 
     if !respond_to?(:bt_attributes)
       class_attribute :bt_attributes 
@@ -609,13 +609,18 @@ class << ActiveRecord::Base
     end
 
     collection = collection.to_s.pluralize
+    singular_sym = collection.singularize.to_sym
+    plural_sym = collection.to_sym
 
-    bt_attributes[collection.to_sym] = { :type => :collection, :class => collection.classify.constantize }
+    info = bt_attributes[collection.to_sym] = { 
+      :type => :collection, 
+      :class => collection.classify.constantize,
+    }
 
     has_many collection.to_sym, extend: ActsAsBitemporal::AssociationMethods
 
     define_method("bt_#{collection}") do |*args|
-      bt_attributes[collection.to_sym][:class].bt_intersect(*args).where(:record_id => [self, bt_entity(*args)])
+      send(collection.to_sym).bt_intersect(*args)
     end
   end
 
@@ -623,38 +628,65 @@ class << ActiveRecord::Base
   #
   #     has_one_bitemporal :name
   def has_one_bitemporal(attribute, options={})
+
+    if !respond_to?(:bt_attributes)
+      class_attribute :bt_attributes 
+      self.bt_attributes = {}
+    end
+
     singular      = attribute.to_s.singularize
     singular_sym  = singular.to_sym
     plural_sym    = singular.pluralize.to_sym
+    assignments = "#{singular_sym}_assignments".to_sym
+    shared = options.delete(:shared)
 
-    info = bt_attributes[singular_sym] = { 
+    info = bt_attributes[singular_sym] = {
       :type => :scalar, 
       :class => singular.classify.constantize,
-      :expose => options.delete(:expose) || []
+      :shared => shared,
+      :expose => options.delete(:expose) || [],
+      :assignment_class => shared && assignments.to_s.classify.constantize,
     }
-    attr_list = info[:expose]
 
-    has_many plural_sym,  extend: ActsAsBitemporal::AssociationMethods
+    if shared
+      has_one_bitemporal assignments
+      has_many plural_sym, through: assignments
 
-    after_method = "bt_after_create_#{singular}"
-    after_create after_method.to_sym
+      define_method("bt_#{plural_sym}".to_sym) do |*args| 
+        info[:class].joins(assignments).
+          merge(info[:assignment_class].bt_intersect(*args)).
+          merge(info[:assignment_class].where(record_id: self))
+      end
 
-    define_method(after_method) do
-      attributes = Hash[ attr_list.map { |a| [a, send("bta_#{singular_sym}_#{a}")] } ]
-      # things         << (thing              ||        Thing.new( :thing_attr0 => bta_thing_attr0, :thing_attr1 => bta_thing_attr1)
-      send(plural_sym) << (send(singular_sym) || info[:class].new(attributes))
-    end
+      define_method("bt_#{singular_sym}") { |*args| send("bt_#{plural_sym}", *args).first }
+      define_method("bt_#{singular_sym}!") { |*args| send("bt_#{plural_sym}", *args).first! }
 
-    define_method("bt_#{plural_sym}") { |*args| send(plural_sym).bt_intersect(*args) }
-    define_method("bt_#{singular_sym}") { |*args| send("bt_#{plural_sym}").first }
-    define_method("bt_#{singular_sym}!") { |*args| send("bt_#{plural_sym}").first! }
+    else
 
-    attr_accessor singular_sym
-    attr_list.each do |attr|
-      setter = "bta_#{singular_sym}_#{attr}"
-      attr_accessor setter
-      define_method("#{attr}") { send(setter) }
-      define_method("#{attr}=") {|value| send("#{setter}=", value)}
+      attr_list = info[:expose]
+
+      has_many plural_sym,  extend: ActsAsBitemporal::AssociationMethods
+
+      after_method = "bt_after_create_#{singular}"
+      after_create after_method.to_sym
+
+      define_method(after_method) do
+        attributes = Hash[ attr_list.map { |a| [a, send("bta_#{singular_sym}_#{a}")] } ]
+        # things         << (thing              ||        Thing.new( :thing_attr0 => bta_thing_attr0, :thing_attr1 => bta_thing_attr1)
+        send(plural_sym) << (send(singular_sym) || info[:class].new(attributes))
+      end
+
+      define_method("bt_#{plural_sym}") { |*args| send(plural_sym).bt_intersect(*args) }
+      define_method("bt_#{singular_sym}") { |*args| send("bt_#{plural_sym}").first }
+      define_method("bt_#{singular_sym}!") { |*args| send("bt_#{plural_sym}").first! }
+
+      attr_accessor singular_sym
+      attr_list.each do |attr|
+        setter = "bta_#{singular_sym}_#{attr}"
+        attr_accessor setter
+        define_method("#{attr}") { send(setter) }
+        define_method("#{attr}=") {|value| send("#{setter}=", value)}
+      end
     end
   end
 end
