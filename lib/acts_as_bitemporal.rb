@@ -600,4 +600,61 @@ class << ActiveRecord::Base
     validate          :bt_scope_constraint
 
   end
+
+  def has_many_bitemporal(collection)
+
+    if !respond_to?(:bt_attributes)
+      class_attribute :bt_attributes 
+      self.bt_attributes = {}
+    end
+
+    collection = collection.to_s.pluralize
+
+    bt_attributes[collection.to_sym] = { :type => :collection, :class => collection.classify.constantize }
+
+    has_many collection.to_sym, extend: ActsAsBitemporal::AssociationMethods
+
+    define_method("bt_#{collection}") do |*args|
+      bt_attributes[collection.to_sym][:class].bt_intersect(*args).where(:record_id => [self, bt_entity(*args)])
+    end
+  end
+
+  # Define an associated record that is versioned bitemporaly.
+  #
+  #     has_one_bitemporal :name
+  def has_one_bitemporal(attribute, options={})
+    singular      = attribute.to_s.singularize
+    singular_sym  = singular.to_sym
+    plural_sym    = singular.pluralize.to_sym
+
+    info = bt_attributes[singular_sym] = { 
+      :type => :scalar, 
+      :class => singular.classify.constantize,
+      :expose => options.delete(:expose) || []
+    }
+    attr_list = info[:expose]
+
+    has_many plural_sym,  extend: ActsAsBitemporal::AssociationMethods
+
+    after_method = "bt_after_create_#{singular}"
+    after_create after_method.to_sym
+
+    define_method(after_method) do
+      attributes = Hash[ attr_list.map { |a| [a, send("bta_#{singular_sym}_#{a}")] } ]
+      # things         << (thing              ||        Thing.new( :thing_attr0 => bta_thing_attr0, :thing_attr1 => bta_thing_attr1)
+      send(plural_sym) << (send(singular_sym) || info[:class].new(attributes))
+    end
+
+    define_method("bt_#{plural_sym}") { |*args| send(plural_sym).bt_intersect(*args) }
+    define_method("bt_#{singular_sym}") { |*args| send("bt_#{plural_sym}").first }
+    define_method("bt_#{singular_sym}!") { |*args| send("bt_#{plural_sym}").first! }
+
+    attr_accessor singular_sym
+    attr_list.each do |attr|
+      setter = "bta_#{singular_sym}_#{attr}"
+      attr_accessor setter
+      define_method("#{attr}") { send(setter) }
+      define_method("#{attr}=") {|value| send("#{setter}=", value)}
+    end
+  end
 end
