@@ -470,8 +470,8 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     { entity_id: 2, name: 'first Alternate', vtstart_at: '2010-01-01'},
   ]
   SampleMap = <<MAP
-0: AA
-0: ABB
+0: AA  
+0: ABB 
 0:  BCC
 0:   CC
 1: AAAA
@@ -482,12 +482,12 @@ MAP
     with_records Sample do |bt_model|
       assert_equal SampleMap, bt_model.unscoped.bt_ascii
 
-      entity1 = bt_model.where(entity_id: 1)
+      entity1 = bt_model.where(entity_id: 1).order(:ttstart_at)
 
       assert_equal 3, entity1.size
 
       assert_equal 1, entity1.bt_current.size
-      assert_equal 'third', entity1.first.name
+      assert_equal 'third', entity1.bt_current.first.name
 
       assert_equal 1, entity1.bt_current.size
       assert_equal 'second', entity1.bt_current('2010-02-01').first.name, "bt_current with instant argument"
