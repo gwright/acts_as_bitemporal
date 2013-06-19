@@ -90,6 +90,11 @@ module ActsAsBitemporal
   end
   alias active? tt_forever?
 
+  # Returns true if the record is inactive (i.e. transaction period is closed).
+  def inactive?
+    not active?
+  end
+
   # Returns true if the valid period is open ended.
   def vt_forever?
     vtend_at == Forever
