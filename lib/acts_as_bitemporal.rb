@@ -611,7 +611,13 @@ class << ActiveRecord::Base
 
     if bt_belongs_to = options.delete(:for)
       self.bt_scope_columns = [bt_belongs_to.foreign_key]     # Entity => entity_id
-    elsif self.bt_scope_columns = options.delete(:scope)
+      belongs_to bt_belongs_to.tableize.singularize.to_sym    # Person => person
+      if shared_class = options.delete(:shares)
+        belongs_to shared_class.tableize.singularize.to_sym
+      end
+    end
+
+    if self.bt_scope_columns = options.delete(:scope)
       self.bt_scope_columns = Array(bt_scope_columns).map(&:to_s)
     else
       self.bt_scope_columns = self.column_names.grep /_id\z/
@@ -625,13 +631,36 @@ class << ActiveRecord::Base
     after_commit      :bt_after_commit
     before_validation :complete_bt_timestamps
     validate          :bt_scope_constraint
+  end
+
+  def belongs_bitemporally_to(parent, options={})
+    singular_sym = parent.to_s.singularize.to_sym
+    plural_sym = singular_sym.to_s.pluralize.to_sym
+    shared = options.delete(:shared)
+    if shared.respond_to?(:to_str)
+      share_class = shared
+    elsif shared
+      share_class = "#{name.tableize.singularize}_assignments".classify
+    else
+      raise ArgumentError, "required option, :shared, missing"
+    end
+
+    has_many share_class.tableize.to_sym
+    has_many plural_sym, through: share_class.tableize.to_sym
+
+    singleton_class.send(:define_method, :assigned_to) do |record, *args|
+      joins(share_class.tableize.to_sym).
+        merge(share_class.constantize.bt_intersect(*args)).
+        merge(share_class.constantize.where(record_id: record))
+    end
 
   end
+
 
   def has_many_bitemporal(collection, options={})
 
     if !respond_to?(:bt_attributes)
-      class_attribute :bt_attributes 
+      class_attribute :bt_attributes
       self.bt_attributes = {}
     end
 
@@ -639,15 +668,15 @@ class << ActiveRecord::Base
     singular_sym = collection.singularize.to_sym
     plural_sym = collection.to_sym
 
-    info = bt_attributes[collection.to_sym] = { 
-      :type => :collection, 
-      :class => collection.classify.constantize,
+    info = bt_attributes[collection.to_sym] = {
+      :type => :collection,
+      :class_name => collection.classify,
     }
 
-    has_many collection.to_sym, extend: ActsAsBitemporal::AssociationMethods
+    has_many plural_sym, extend: ActsAsBitemporal::AssociationMethods
 
     define_method("bt_#{collection}") do |*args|
-      send(collection.to_sym).bt_intersect(*args)
+      send(plural_sym).bt_intersect(*args)
     end
   end
 
@@ -668,18 +697,20 @@ class << ActiveRecord::Base
     shared = options.delete(:shared)
 
     info = bt_attributes[singular_sym] = {
-      :type => :scalar, 
-      :class => singular.classify.constantize,
+      :type => :scalar,
+      :class_name => singular.classify,
       :shared => shared,
       :expose => options.delete(:expose) || [],
-      :assignment_class => shared && assignments.to_s.classify.constantize,
+      :assignment_class_name => shared && assignments.to_s.classify,
     }
 
     if shared
       has_one_bitemporal assignments
       has_many plural_sym, through: assignments
 
-      define_method("bt_#{plural_sym}".to_sym) do |*args| 
+      define_method("bt_#{plural_sym}".to_sym) do |*args|
+        info[:class] ||= info[:class_name].constantize
+        info[:assignment_class] ||= info[:assignment_class_name].constantize
         info[:class].joins(assignments).
           merge(info[:assignment_class].bt_intersect(*args)).
           merge(info[:assignment_class].where(record_id: self))
@@ -698,9 +729,12 @@ class << ActiveRecord::Base
       after_create after_method.to_sym
 
       define_method(after_method) do
-        attributes = Hash[ attr_list.map { |a| [a, send("bta_#{singular_sym}_#{a}")] } ]
-        # things         << (thing              ||        Thing.new( :thing_attr0 => bta_thing_attr0, :thing_attr1 => bta_thing_attr1)
-        send(plural_sym) << (send(singular_sym) || info[:class].new(attributes))
+        info[:class] ||= info[:class_name].constantize
+        if !attr_list.empty?
+          attributes = Hash[ attr_list.map { |a| [a, send("bta_#{singular_sym}_#{a}")] } ]
+          # things         << (thing              ||        Thing.new( :thing_attr0 => bta_thing_attr0, :thing_attr1 => bta_thing_attr1)
+          send(plural_sym) << (send(singular_sym) || info[:class].new(attributes))
+        end
       end
 
       define_method("bt_#{plural_sym}") { |*args| send(plural_sym).bt_intersect(*args) }
