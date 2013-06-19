@@ -247,15 +247,21 @@ module ActsAsBitemporal
   #
   #     bt_revise(attr1: 'new value')
   # XXX Should detect fragmented period and coalece in revision.
+  #
+  # When the proposed revision has a vt range that overlaps one or more existing
+  # records those records are also finalized and revised but their own vt periods
+  # are retained. bt_revise preserves the existing valid time periods -- it will
+  # not create a new record with a valid time range that covers a previously
+  # invalid time.
   def bt_revise(attrs={})
-    raise ArgumentError, "invalid revision of non-current record" unless tt_forever?
+    raise ArgumentError, "invalid revision of non-current record" if inactive?
 
     revision = bt_new_version(attrs)
 
     return [] if !changed? and revision.bt_same_snapshot?(self)
 
     bt_delete(revision.vtstart_at, revision.vtend_at) do |overlapped, vtrange, transaction_time|
-      intersection = overlapped.vt_range.intersection(revision.vtstart_at, revision.vtend_at)
+      intersection = overlapped.vt_range.intersection(vtrange)
       revision.bt_new_version(vtstart_at: intersection.begin, vtend_at: intersection.end).bt_commit(transaction_time).first
     end
   end
@@ -499,7 +505,7 @@ module ActsAsBitemporal
         #warn "start,end,tstart,tend,len = #{[row, vstart, vend, tstart, tend,len = (vend - vstart + 1), version.to_s * len].inspect}"
 
         (tstart..tend).each do |tindex|
-          span = Tokens[version] * (vend - vstart + 1) 
+          span = Tokens[version] * (vend - vstart + 1)
 
           picture[tindex][vstart..vend] = span
         end
@@ -643,7 +649,7 @@ class << ActiveRecord::Base
   def has_one_bitemporal(attribute, options={})
 
     if !respond_to?(:bt_attributes)
-      class_attribute :bt_attributes 
+      class_attribute :bt_attributes
       self.bt_attributes = {}
     end
 
