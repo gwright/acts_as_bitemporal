@@ -535,5 +535,30 @@ MAP
 
     end
   end
+
+  def test_bt_delete
+    with_records Sample do |bt_model|
+      first = bt_model.where(name: 'third').first
+      first_start = first.vtstart_at
+      first_end = first.vtend_at
+
+      start2 = Time.zone.parse('2010-04-01')
+      end2 = Time.zone.parse('2010-05-01')
+      result = first.bt_delete(start2, end2)
+
+      assert_equal 1, result.size
+
+      thirds = bt_model.where(name: 'third')
+      assert_equal 3, thirds.size
+      thirds.each { |r|
+        warn "#{r.id} #{r.vtstart_at} #{r.vtend_at} #{r.name}"
+      }
+
+      assert thirds.where(vtstart_at: first_start, vtend_at: first_end).exists?
+      assert thirds.where(vtstart_at: first_start, vtend_at: start2).exists?
+      assert thirds.where(vtstart_at: end2, vtend_at: first_end).exists?
+
+    end
+  end
 end
 

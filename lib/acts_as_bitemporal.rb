@@ -186,7 +186,7 @@ module ActsAsBitemporal
   # Logically delete (finalize) the versions of this record that match the
   # specified temporal scope.
   #
-  #   bt_delete                      # [AllTime, now]
+  #   bt_delete                      # [current range, now]
   #   bt_delete(vt_range)            # [vt_range, now]
   #   bt_delete(vt_range, tt_range)  # [vt_range, tt_range]
   #   bt_delete(start, end)          # [start...end, now]
@@ -201,19 +201,20 @@ module ActsAsBitemporal
   #
   #   bt_delete { |record, vt_range, commit_time| .. }
   def bt_delete(*args)
-    vt_range, commit_time = bt_coerce_slice(*args)
+    delete_vt_range, commit_time = bt_coerce_slice(*args)
     ActiveRecord::Base.transaction do
-      bt_history(vt_range).lock(true).map do |overlap|
+      bt_history(delete_vt_range).lock(true).map do |overlap|
         overlap.bt_finalize(commit_time)
 
-        overlap.vt_range.difference(vt_range).each do |segment|
+        overlap.vt_range.difference(delete_vt_range).each do |segment|
           bt_new_version(vtstart_at: segment.begin, vtend_at: segment.end).bt_commit(commit_time)
         end
 
-        (block_given? && yield(overlap, vt_range, commit_time)) || overlap
+        (block_given? && yield(overlap, delete_vt_range, commit_time)) || overlap
       end
     end.tap do
-      self.ttend_at = commit_time
+      # Clean up in memory version...a bit. May be misleading if entire range wasn't removed.
+      self.ttend_at = commit_time if vt_range.intersects?(delete_vt_range)
     end
   end
 
@@ -349,7 +350,7 @@ module ActsAsBitemporal
   # Coerce arguments to a standard format for a slice of valid time records
   # represented by a valid time range and a transaction time instant.
   #
-  #   bt_coerce_slice                      # [AllTime, now]
+  #   bt_coerce_slice                      # [vt_current, now]
   #   bt_coerce_slice(vt_range)            # [vt_range, now]
   #   bt_coerce_slice(vt_range, tt_range)  # [vt_range, tt_range]
   #   bt_coerce_slice(start, end)          # [start...end, now]
@@ -357,7 +358,7 @@ module ActsAsBitemporal
   def bt_coerce_slice(*args)
     case args.size
     when 0
-      [AllTime, Time.zone.now]
+      [vt_range, Time.zone.now]
     when 1
       [ARange[*args], Time.zone.now]
     when 2
