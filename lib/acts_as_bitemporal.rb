@@ -228,9 +228,17 @@ module ActsAsBitemporal
     end
   end
 
-  # Mark the current record as finalized by updateing the ttend_at timestamp.
+  # Mark the current record as finalized by updating the ttend_at timestamp.
+  # The record is only updated if the in-memory copy is unchanged and active.
+  #
+  # Returns true if the database record was updated and false if the update
+  # failed because the record had already been finalized.
   def bt_finalize(commit_time=Time.zone.now)
-    update_column(:ttend_at, commit_time)
+    if !changed? and active?
+      not self.class.where(id: id, ttend_at: Forever).update_all(ttend_at: commit_time).zero?
+    else
+      raise ArgumentError, "invalid finalization of modified or finalized record"
+    end
   end
 
   # Revise this record by finalizing the current version and saving the new version.
