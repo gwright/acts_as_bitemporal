@@ -260,10 +260,18 @@ module ActsAsBitemporal
 
     return [] if !changed? and revision.bt_same_snapshot?(self)
 
-    bt_delete(revision.vtstart_at, revision.vtend_at) do |overlapped, vtrange, transaction_time|
+    result = bt_delete(revision.vtstart_at, revision.vtend_at) do |overlapped, vtrange, transaction_time|
       intersection = overlapped.vt_range.intersection(vtrange)
       revision.bt_new_version(vtstart_at: intersection.begin, vtend_at: intersection.end).bt_commit(transaction_time).first
     end
+
+    if result.empty?
+      # The revised record doesn't intersect with any existing records (including its previous version).
+      revision.bt_commit
+      result << revision
+    end
+
+    result
   end
 
   # Returns hash of the four temporal attributes.

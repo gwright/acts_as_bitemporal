@@ -495,6 +495,45 @@ MAP
     end
   end
 
+  def test_bt_revise_with_no_overlaps
+    with_records Sample do |bt_model|
 
+      entity2 = bt_model.where(entity_id: 2).first
+
+      # Create a new version that pre-dates the existing version.
+      new_start = entity2.vtstart_at = entity2.vtstart_at - 15.days
+      new_end = entity2.vtend_at = entity2.vtstart_at + 5.days
+      entity2.bt_revise
+
+      entity2_versions = entity2.bt_versions
+      assert_equal 2, entity2_versions.size, 'should have two versions'
+
+      versions  = entity2_versions.vt_intersect(new_start + 1.day)
+      assert_equal 1, versions.size, 'new version should have new vt range'
+
+      new_version = versions.first
+      assert new_version, 'should only be one version in the new range'
+      assert_equal new_start, new_version.vtstart_at, 'should have expected vtstart'
+      assert_equal new_end, new_version.vtend_at, 'should have expected vtend'
+
+      # Create another version that is even older and has change to non-temporal column'
+      start3 = new_version.vtstart_at = new_start - 15.days
+      end3 = new_version.vtend_at = start3 + 5.days
+      name3 = new_version.name = 'Updated Entity 2'
+      result = new_version.bt_revise
+
+      assert_equal start3, result.first.vtstart_at, 'has revised vtstart_at'
+      assert_equal end3, result.first.vtend_at, 'has revised vtend_at'
+      assert_equal name3, result.first.name, 'has revised name'
+
+      newest_versions  = entity2.bt_versions
+      assert_equal 3, newest_versions.size, 'should have three versions now'
+
+      version3 = newest_versions.vt_intersect(start3 + 1.day)
+      assert_equal 1, version3.size,   'only one version in oldest vt range'
+      assert_equal 'Updated Entity 2', version3.first.name, 'should have expected name'
+
+    end
+  end
 end
 
