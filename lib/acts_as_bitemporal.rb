@@ -121,7 +121,7 @@ module ActsAsBitemporal
     vt_intersects?(now) and tt_intersects?(now)
   end
 
-  def complete_bt_timestamps
+  def bt_ensure_timestamps
     transaction_time = ttstart_at || Time.zone.now
 
     self.ttstart_at ||= transaction_time
@@ -600,6 +600,12 @@ class << ActiveRecord::Base
   #
   # The table definition helper, bt_timestamps, is provided to easily add
   # these timestamps.
+  #
+  # include ActsAsBitemporal instance methods
+  # define scope
+  #     default (_id)
+  #     for
+  #     scope
   def acts_as_bitemporal(*args)
     options = args.extract_options!
     bt_exclude_columns = %w{id type}    # AR maintains these columns
@@ -611,11 +617,7 @@ class << ActiveRecord::Base
     class_attribute :bt_value_columns
 
     if bt_belongs_to = options.delete(:for)
-      self.bt_scope_columns = [bt_belongs_to.foreign_key]     # Entity => entity_id
-      belongs_to bt_belongs_to.tableize.singularize.to_sym    # Person => person
-      if shared_class = options.delete(:shares)
-        belongs_to shared_class.tableize.singularize.to_sym
-      end
+      self.bt_scope_columns = [bt_belongs_to.to_s.foreign_key] # Entity => entity_id
     end
 
     if self.bt_scope_columns = options.delete(:scope)
@@ -629,34 +631,10 @@ class << ActiveRecord::Base
 
     attr_accessor :bt_safe
 
-    after_commit      :bt_after_commit
-    before_validation :complete_bt_timestamps
+    before_validation :bt_ensure_timestamps
     validate          :bt_scope_constraint
+    after_commit      :bt_after_commit
   end
-
-  def belongs_bitemporally_to(parent, options={})
-    singular_sym = parent.to_s.singularize.to_sym
-    plural_sym = singular_sym.to_s.pluralize.to_sym
-    shared = options.delete(:shared)
-    if shared.respond_to?(:to_str)
-      share_class = shared
-    elsif shared
-      share_class = "#{name.tableize.singularize}_assignments".classify
-    else
-      raise ArgumentError, "required option, :shared, missing"
-    end
-
-    has_many share_class.tableize.to_sym
-    has_many plural_sym, through: share_class.tableize.to_sym
-
-    singleton_class.send(:define_method, :assigned_to) do |record, *args|
-      joins(share_class.tableize.to_sym).
-        merge(share_class.constantize.bt_intersect(*args)).
-        merge(share_class.constantize.where(record_id: record))
-    end
-
-  end
-
 
   def has_many_bitemporal(collection, options={})
 
@@ -694,27 +672,26 @@ class << ActiveRecord::Base
     singular      = attribute.to_s.singularize
     singular_sym  = singular.to_sym
     plural_sym    = singular.pluralize.to_sym
-    assignments = "#{singular_sym}_assignments".to_sym
-    shared = options.delete(:shared)
+    through = options.delete(:through)
+    assignments = through.to_s.pluralize.to_sym
 
     info = bt_attributes[singular_sym] = {
       :type => :scalar,
       :class_name => singular.classify,
-      :shared => shared,
+      :through => through,
       :expose => options.delete(:expose) || [],
-      :assignment_class_name => shared && assignments.to_s.classify,
+      :through_class_name => through.to_s.classify,
     }
 
-    if shared
+    if through
       has_one_bitemporal assignments
       has_many plural_sym, through: assignments
 
       define_method("bt_#{plural_sym}".to_sym) do |*args|
         info[:class] ||= info[:class_name].constantize
-        info[:assignment_class] ||= info[:assignment_class_name].constantize
-        info[:class].joins(assignments).
-          merge(info[:assignment_class].bt_intersect(*args)).
-          merge(info[:assignment_class].where(record_id: self))
+        info[:through_class] ||= info[:through_class_name].constantize
+
+        send(plural_sym).merge(info[:through_class].bt_intersect(*args))
       end
 
       define_method("bt_#{singular_sym}") { |*args| send("bt_#{plural_sym}", *args).first }
