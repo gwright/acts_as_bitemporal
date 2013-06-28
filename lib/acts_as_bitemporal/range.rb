@@ -230,5 +230,19 @@ module ActsAsBitemporal
     def <=>(other)
       (self.begin <=> other.begin) || (other.begin <=> self.begin)
     end
+
+    def inspect
+      "#{inspect_time(db_begin)}...#{inspect_time(db_end)}"
+    end
+
+    def inspect_time(value)
+      if value.kind_of?(String)
+        value
+      elsif self.class[Time.zone.now - 12.hours, Time.zone.now + 12.hours].include?(value)
+        value.strftime("%r")
+      else
+        value.strftime("%F")
+      end
+    end
   end
 end
