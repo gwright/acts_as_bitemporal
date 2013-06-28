@@ -1,6 +1,6 @@
 
 module ActsAsBitemporal
-  class Range < ::Range
+  class Range #< ::Range
 
     # Covenience method for creating instances.
     #   ActsAsBitemporal::Range[1,4]      # => [1,4)
@@ -8,11 +8,92 @@ module ActsAsBitemporal
     def self.[](start_instant, end_instant)
       new(start_instant, end_instant)
     end
+    #     begin, end, first, last,
+    #     ==, eql?, hash, ===, 
+    #     include?, member?, 
+    #     inspect, pretty_print, step, to_s, to_yaml
+    #     each, exclude_end?
 
+    attr :begin, :end
     # All ranges are [closed, open)
-    def initialize(first, second)
-      super(first, second, true)
+    def initialize(min, max)
+      @begin, @end = coerce(min), coerce(max)
     end
+
+    def db_begin
+      if infinite_begin?
+        NinfinityLiteral
+      else
+        self.begin
+      end
+    end
+
+    def db_end
+      if infinite_end?
+        InfinityLiteral
+      else
+        self.end
+      end
+    end
+
+    def infinite_begin?
+      self.begin == Ninfinity
+    end
+
+    def infinite_end?
+      self.end == Infinity
+    end
+
+    def coerce(other)
+      if other == "infinity" or other == InfinityValue
+        Infinity
+      elsif other == "-infinity" or other == NinfinityValue
+        Ninfinity
+      elsif other.respond_to?(:in_time_zone)
+        other.in_time_zone
+      elsif other.respond_to?(:to_time_in_current_zone)
+        other.to_time_in_current_zone
+      elsif other.respond_to?(:to_time)
+        other.to_time.in_time_zone
+      elsif other.respond_to?(:<=>)
+        other
+      else
+        fail ArgumentError, "unable to convert: #{other.class} to ActiveSupport::TimeWithZone instance"
+      end
+    end
+
+    alias first begin
+    alias last end
+
+    def ==(other)
+      self.begin == other.begin and self.end == other.end
+    end
+
+    def eql?(other)
+      self == other
+    end
+
+    # XXX Not sure about this...
+    def hash
+      self.begin.hash ^ self.end.hash
+    end
+
+    # The order is important here so that DateTime::Infinity
+    # values work for end points.
+    def ===(instant)
+      (instant >= self.begin) and (instant < self.end)
+    end
+    alias include? ===
+    alias member? ===
+    alias cover? ===
+
+    def each
+      raise "use each_day, each_month, or each_year"
+    end
+
+    def each_day
+    end
+
 
     # Returns true if the range intersects range or value.
     #   Range[1,4].intersects?(1)             # => true
@@ -57,7 +138,7 @@ module ActsAsBitemporal
     def merge(*args)
       other = coerce_range(*args)
       raise ArgumentError, "ranges are disjoint" if disjoint?(other) and !meets?(other)
-      self.class.new([self.begin, other.begin].min, [self.end, other.end].max)
+      self.class.new(self.class.min(self.begin, other.begin), self.class.max(self.end, other.end))
     end
 
     # Returns true if there is no gap between the range and the other range.
@@ -75,9 +156,42 @@ module ActsAsBitemporal
       other = coerce_range(*args)
       sorted = [self, other].sort
 
-      return nil if sorted[0].end < sorted[1].begin
+      return nil if self.class.compare(sorted[0].end, sorted[1].begin) < 0
 
-      ARange[sorted[1].begin, [sorted[1].end, sorted[0].end].min]
+      ARange[sorted[1].begin, self.class.min(sorted[1].end, sorted[0].end)]
+    end
+
+    def self.compare(a,b)
+      a = (a == -Float::INFINITY) ? Ninfinity : a
+      b = (b == Float::INFINITY) ? Infinity : b
+
+      result = if a.kind_of?(Date::Infinity) 
+        -(b <=> a)
+      else
+        (a <=> b)
+      end
+
+      if result.nil?
+        -compare(b,a)
+      else
+        result
+      end
+    end
+
+    def self.min(a,b)
+      if compare(a,b) < 0
+        a
+      else
+        b
+      end
+    end
+
+    def self.max(a,b)
+      if compare(a,b) > 0
+        a
+      else
+        b
+      end
     end
 
     def difference(*other)
@@ -112,8 +226,9 @@ module ActsAsBitemporal
     end
 
     # Partial ordering of ranges based on the start endpoint.
+    # If comparison fails, try reverse to handle DateTime::Infinity
     def <=>(other)
-      self.begin <=> other.begin
+      (self.begin <=> other.begin) || (other.begin <=> self.begin)
     end
   end
 end

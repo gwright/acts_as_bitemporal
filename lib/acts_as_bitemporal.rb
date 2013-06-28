@@ -13,20 +13,35 @@ module ActsAsBitemporal
   # Alias to clarify we aren't using Ruby's Range
   ARange = ActsAsBitemporal::Range
 
-  # The timestamp used to signify an indefinite end of a time period.
-  Forever         = Time.utc(9999,12,31).in_time_zone
+  adapter_name = (ENV['DB'] || ActiveRecord::Base.connection.adapter_name) rescue 'postgresql'
 
-  # The timestamp used to signify an indefinite start of a time period.
-  NegativeForever = Time.utc(1000,12,31).in_time_zone
+  if adapter_name =~/postgres/i
+    # The timestamp used to signify an indefinite end of a time period.
+    Infinity  = DateTime::Infinity.new #Time.utc(9999,12,31).in_time_zone
+    InfinityLiteral = 'infinity'
+    InfinityValue = Float::INFINITY
+
+    # The timestamp used to signify an indefinite start of a time period.
+    Ninfinity = -Infinity #Time.utc(1000,12,31).in_time_zone
+    NinfinityLiteral = '-infinity'
+    NinfinityValue = -InfinityValue
+  else
+    # The timestamp used to signify an indefinite end of a time period.
+    Infinity  = Time.utc(9999,12,31).in_time_zone
+    InfinityLiteral = Infinity
+    InfinityValue = Infinity
+
+    # The timestamp used to signify an indefinite start of a time period.
+    Ninfinity = Time.utc(1000,12,31).in_time_zone
+    NinfinityLiteral = Ninfinity
+    NinfinityValue = Ninfinity
+  end
 
   # A Range that represents all time.
-  AllTime         = ARange[NegativeForever, Forever]
-
-  # A lambda to format timestamps.
-  T = ->(t) { t ? t.strftime("%c %N %z") : "Forever" }
+  AllTime         = ARange[Ninfinity, Infinity]
 
   def inspect
-    "id: #{id}, vt:#{T[vtstart_at]}..#{T[vtend_at]}, tt:#{T[ttstart_at]}..#{T[ttend_at]}, scope: #{self[self.class.bt_scope_columns.first]}"
+    "id: #{id}, vt:#{vt_range.inspect}, tt:#{tt_range.inspect}, scope: #{attributes.slice(*self.class.bt_scope_columns).map { |k,v| "#{k}: #{v}"}.join(' ')}"
   end
 
   # Returns versions of this record that have a bitemporal scope that intersects
@@ -86,7 +101,7 @@ module ActsAsBitemporal
 
   # Returns true if the record is active (i.e. transaction period is open).
   def tt_forever?
-    ttend_at == Forever
+    ttend_at == InfinityValue
   end
   alias active? tt_forever?
 
@@ -97,7 +112,7 @@ module ActsAsBitemporal
 
   # Returns true if the valid period is open ended.
   def vt_forever?
-    vtend_at == Forever
+    vtend_at == InfinityValue
   end
 
   # Returns true if the transaction and valid periods are both open ended.
@@ -125,10 +140,10 @@ module ActsAsBitemporal
     transaction_time = ttstart_at || Time.zone.now
 
     self.ttstart_at ||= transaction_time
-    self.ttend_at ||= Forever
+    self.ttend_at ||= InfinityLiteral
 
     self.vtstart_at ||= transaction_time
-    self.vtend_at ||= Forever
+    self.vtend_at ||= InfinityLiteral
   end
 
   # Bitemporal Equality Tests
@@ -207,7 +222,7 @@ module ActsAsBitemporal
         overlap.bt_finalize(commit_time)
 
         overlap.vt_range.difference(delete_vt_range).each do |segment|
-          bt_new_version(vtstart_at: segment.begin, vtend_at: segment.end).bt_commit(commit_time)
+          bt_new_version(vtstart_at: segment.db_begin, vtend_at: segment.db_end).bt_commit(commit_time)
         end
 
         (block_given? && yield(overlap, delete_vt_range, commit_time)) || overlap
@@ -236,7 +251,7 @@ module ActsAsBitemporal
   # failed because the record had already been finalized.
   def bt_finalize(commit_time=Time.zone.now)
     if !changed? and active?
-      not self.class.where(id: id, ttend_at: Forever).update_all(ttend_at: commit_time).zero?
+      not self.class.where(id: id, ttend_at: InfinityLiteral).update_all(ttend_at: commit_time).zero?
     else
       raise ArgumentError, "invalid finalization of modified or finalized record"
     end
@@ -263,7 +278,7 @@ module ActsAsBitemporal
 
     result = bt_delete(revision.vtstart_at, revision.vtend_at) do |overlapped, vtrange, transaction_time|
       intersection = overlapped.vt_range.intersection(vtrange)
-      revision.bt_new_version(vtstart_at: intersection.begin, vtend_at: intersection.end).bt_commit(transaction_time).first
+      revision.bt_new_version(vtstart_at: intersection.db_begin, vtend_at: intersection.db_end).bt_commit(transaction_time).first
     end
 
     if result.empty?
@@ -396,9 +411,9 @@ module ActsAsBitemporal
       if range_end
         table[start_column].lt(range_end).and(table[end_column].gt(start_or_instant_or_range))
       elsif Range === start_or_instant_or_range
-        table[start_column].lt(start_or_instant_or_range.end).and(table[end_column].gt(start_or_instant_or_range.begin))
+        table[start_column].lt(start_or_instant_or_range.db_end).and(table[end_column].gt(start_or_instant_or_range.db_begin))
       else
-        start_or_instant_or_range ||= Forever
+        start_or_instant_or_range ||= InfinityLiteral
         table[start_column].lteq(start_or_instant_or_range).and(table[end_column].gt(start_or_instant_or_range))
       end
     end
@@ -441,7 +456,7 @@ module ActsAsBitemporal
     #   bt_intersect                # => selects records valid and active now.
     #   tt_intersect("2013-01-01")  # => selects records active on January 1, 2013 at 00:00:00.
     #   bt_intersect("2013-01-01", "2013-01-02")  # => selects records valid on Jan 1 at midnight but not known until Jan 2 at midnight.
-    #   bt_intersect("2013-01-01", "2013-01-02", "2013-02-01", Forever)
+    #   bt_intersect("2013-01-01", "2013-01-02", "2013-02-01", InfinityLiteral)
     #       # => selects records valid on Jan 1st but not known until after Feb 1 at midnight.
     #   bt_intersect(bt_record)     # => selects records valid and active while bt_record is also valid and active.
     def bt_intersect(*args)
@@ -486,11 +501,11 @@ module ActsAsBitemporal
     end
 
     def vt_forever
-      where(:vtend_at => Forever)
+      where(:vtend_at => InfinityLiteral)
     end
 
     def tt_forever
-      where(:ttend_at => Forever)
+      where(:ttend_at => InfinityLiteral)
     end
 
     Tokens = ('A'..'Z').to_a.join
@@ -499,14 +514,14 @@ module ActsAsBitemporal
 
       result = order(bt_scope_columns)
       records = result.group_by { |r| r.bt_scope_attributes }
-      vt_ticks = records.map { |scope, list| list.map { |x| [x.vtstart_at, x.vtend_at]} }.flatten.uniq.sort
+      vt_ticks = records.map { |scope, list| list.map { |x| [x.vtstart_at, x.vtend_at]} }.flatten.uniq.sort { |a,b| Range.compare(a,b) }
 
       row = 0
       records.each_with_index do |(scope, list), index|
-      tt_ticks = list.map { |x| [x.ttstart_at, x.ttend_at]}.flatten.uniq.sort
+      tt_ticks = list.map { |x| [x.ttstart_at, x.ttend_at]}.flatten.uniq.sort { |a,b| Range.compare(a,b) }
       picture = Array.new(tt_ticks.size) { " " * vt_ticks.size }
 
-      list.sort_by { |r| r.ttstart_at }.each_with_index do |record, version|
+      list.sort { |a,b| Range.compare(a.ttstart_at, b.ttstart_at) }.each_with_index do |record, version|
         vstart = vt_ticks.index(record.vtstart_at)
         vend   = vt_ticks.index(record.vtend_at)
         tstart = tt_ticks.index(record.ttstart_at)
@@ -534,8 +549,8 @@ module ActsAsBitemporal
         where(n1[:entity_id].eq(n2[:entity_id])).
         where(n1[:vtstart_at].lt(n2[:vtend_at])).
         where(n2[:vtstart_at].lt(n1[:vtend_at])).
-        where(n1[:ttend_at].eq( Forever)).
-        where(n2[:ttend_at].eq( Forever))
+        where(n1[:ttend_at].eq( InfinityLiteral)).
+        where(n2[:ttend_at].eq( InfinityLiteral))
       subquery2 = n.from(n1).project(n1[:entity_id], n1[:vtstart_at], n1[:vtend_at], n1[:ttend_at]).where(Arel::SqlLiteral.new("(#{subquery.to_sql})").gt(1))
       ActiveRecord::Base.connection.execute("select #{subquery2.exists.not.to_sql}").values == "t"
     end
@@ -547,8 +562,8 @@ module ActsAsBitemporal
     def bt_build(attrs={})
       transaction_time = Time.zone.now
       build(attrs.reverse_merge(
-        vtstart_at: nil, vtend_at: Forever,
-        ttstart_at: nil, ttend_at: Forever
+        vtstart_at: nil, vtend_at: InfinityLiteral,
+        ttstart_at: nil, ttend_at: InfinityLiteral
       ))
     end
   end

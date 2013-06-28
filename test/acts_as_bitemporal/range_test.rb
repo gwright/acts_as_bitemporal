@@ -2,7 +2,7 @@
 
 require 'test_helper'
 
-class ActsAsBitemporalRangeTest < ActiveSupport::TestCase
+class ActsAsBitemporal::RangeTest < ActiveSupport::TestCase
 
   ARange = ActsAsBitemporal::Range
 
@@ -155,6 +155,29 @@ class ActsAsBitemporalRangeTest < ActiveSupport::TestCase
     MeetsCases.each do |first, second, expected|
       assert_equal(expected, ARange[*first].meets?(*second))
     end
+  end
+
+  def test_infinity
+    now = Time.zone.now
+    range = ARange[now, 'infinity']
+    assert range.include?(now)
+    assert range.include?(now + 1.day)
+    assert range.include?(now + 1_000.days)
+    assert range.include?(now + 1_000_000.days)
+    assert !range.include?(now - 1.day)
+    assert !range.include?(now - 1_000.days)
+  end
+
+  def test_negative_infinity
+    now = Time.zone.now
+    range = ARange['-infinity', now]
+    assert !range.include?(now)
+    assert !range.include?(now + 1.day)
+    assert !range.include?(now + 1_000.days)
+    assert !range.include?(now + 350_000.days)
+    assert range.include?(now - 1.day)
+    assert range.include?(now - 1_000.days)
+    assert range.include?(now - 350_000.days)
   end
 
 end

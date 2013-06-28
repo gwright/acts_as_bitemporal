@@ -4,8 +4,7 @@ require 'test_helper'
 
 class ActsAsBitemporalTest < ActiveSupport::TestCase
   ARange = ActsAsBitemporal::ARange
-  Forever = ActsAsBitemporal::Forever
-  T = ActsAsBitemporal::T
+  InfinityValue = ActsAsBitemporal::InfinityValue
   EntityOptions = {:extra_columns => {:entity_id => :integer, :name => :string }}.freeze
 
   def entity_attributes(options={})
@@ -64,10 +63,10 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
 
   def current_time_assertions(record, transaction_bounds)
     assert transaction_bounds.covers?(record.vtstart_at),          "valid time started during create call"
-    assert_equal Forever, record.vtend_at,                         "valid time ends at Forever"
+    assert_equal InfinityValue, record.vtend_at,                         "valid time ends at Infinity"
 
     assert_equal record.vtstart_at, record.ttstart_at,             "transaction started at vtstart_at"
-    assert_equal Forever, record.ttend_at,                         "transaction ends at Forever"
+    assert_equal InfinityValue, record.ttend_at,                         "transaction ends at Infinity"
   end
 
 
@@ -102,7 +101,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
   def valid_time_assertions(record, vt_range, tt_bounds)
     assert_equal vt_range, record.vt_range,               "valid time as expected"
     assert       tt_bounds.covers?(record.ttstart_at),    "transaction start bounded"
-    assert_equal Forever,  record.ttend_at,               "transaction ends at Forever"
+    assert_equal InfinityValue,  record.ttend_at,               "transaction ends at Infinity"
   end
 
   def test_valid_time_new_then_save_with_no_scope_conflicts
@@ -229,17 +228,17 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
 
   def new_record_assertions(record, now_time=Time.zone.now, transaction_time=nil)
     # Test valid time
-    assert_equal Forever, record.vtend_at,                                     "should be valid forever"
-    assert (record.vtstart_at...(record.vtend_at)).cover?(now_time),           "should be valid now"
-    refute (record.vtstart_at...(record.vtend_at)).cover?(now_time - 24*60*60),"should not be valid yesterday"
+    assert_equal InfinityValue, record.vtend_at,                                     "should be valid forever"
+    assert ARange[record.vtstart_at, record.vtend_at].cover?(now_time),           "should be valid now"
+    refute ARange[record.vtstart_at, record.vtend_at].cover?(now_time - 24*60*60),"should not be valid yesterday"
 
     # Test valid time convenience methods
     assert record.vt_forever?
     assert record.vt_intersects?(now_time)
 
     # Test transaction time
-    assert_equal record.ttend_at, Forever
-    assert (record.ttstart_at...(record.ttend_at)).cover?(now_time)
+    assert_equal record.ttend_at, InfinityValue
+    assert ARange[record.ttstart_at, record.ttend_at].cover?(now_time)
 
     # Test transaction time covenience methods
     assert record.tt_forever?
@@ -367,7 +366,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
 
         # Fill databsae
         start_list.each_with_index do |(start_offset, end_offset), index|
-          bt_model.create!(entity_id: 100, vtstart_at: base_date + start_offset, vtend_at: end_offset ? base_date + end_offset : Forever)
+          bt_model.create!(entity_id: 100, vtstart_at: base_date + start_offset, vtend_at: end_offset ? base_date + end_offset : InfinityValue)
         end
 
         base_record = bt_model.first
@@ -376,7 +375,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
         assert_equal start_list.count, versions.count
 
         # apply change
-        deleted = base_record.bt_delete( (base_date + del_range.first), del_range.last ? (base_date + del_range.last) : Forever )
+        deleted = base_record.bt_delete( (base_date + del_range.first), del_range.last ? (base_date + del_range.last) : InfinityValue )
 
         assert deleted
 
@@ -386,7 +385,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
         versions.each_with_index do |result_record, index|
           assert_equal (base_date + result_list[index].first), result_record.vtstart_at, "record #{index}, vtstart_at correct"
 
-          expected_end = result_list[index].last ? (base_date + result_list[index].last) : Forever
+          expected_end = result_list[index].last ? (base_date + result_list[index].last) : InfinityValue
           assert_equal expected_end, result_record.vtend_at, "record #{index}, vtend_at correct"
         end
       end
@@ -414,7 +413,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
             entity_id: 100,
             name: "one",
             vtstart_at: base_date + start_offset.days,
-            vtend_at: end_offset ? base_date + end_offset.days : Forever
+            vtend_at: end_offset ? base_date + end_offset.days : InfinityValue
           )
         end
 
@@ -425,7 +424,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
         # apply change
         updated = base_record.bt_revise(
           vtstart_at: (base_date + upd_range.first.days),
-          vtend_at: upd_range.last ? (base_date + upd_range.last.days) : Forever,
+          vtend_at: upd_range.last ? (base_date + upd_range.last.days) : InfinityValue,
           name: "two"
         )
 
@@ -436,7 +435,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
         # verify updated record exist
         upd_list.each do |start_offset, end_offset|
           start_date = (base_date + start_offset.days)
-          end_date   = end_offset ? (base_date + end_offset.days) : Forever
+          end_date   = end_offset ? (base_date + end_offset.days) : InfinityValue
           expected = bt_model.tt_forever.where(vtstart_at: start_date, vtend_at: end_date).first
 
           assert expected, "record still in database"
