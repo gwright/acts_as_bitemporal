@@ -731,8 +731,8 @@ class << ActiveRecord::Base
       end
 
       define_method("bt_#{plural_sym}") { |*args| send(plural_sym).bt_intersect(*args) }
-      define_method("bt_#{singular_sym}") { |*args| send("bt_#{plural_sym}").first }
-      define_method("bt_#{singular_sym}!") { |*args| send("bt_#{plural_sym}").first! }
+      define_method("bt_#{singular_sym}") { |*args| send("bt_#{plural_sym}", *args).first }
+      define_method("bt_#{singular_sym}!") { |*args| send("bt_#{plural_sym}", *args).first! }
 
       attr_accessor singular_sym
       attr_list.each do |attr|
