@@ -238,6 +238,8 @@ module ActsAsBitemporal
     def inspect_time(value)
       if value.kind_of?(String)
         value
+      elsif value.nil?
+        "null"
       elsif self.class[Time.zone.now - 12.hours, Time.zone.now + 12.hours].include?(value)
         value.strftime("%r")
       else
