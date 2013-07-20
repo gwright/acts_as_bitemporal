@@ -401,6 +401,14 @@ module ActsAsBitemporal
       bt_versioned_columns + TemporalColumnNames
     end
 
+    def sifter_bt_constraint(vtstart, vtend, ttstart, ttend)
+      squeel do
+        (ttstart_at == nil) |
+        ((vtstart_at < vtend) & (vtend_at > vtstart) &
+        (ttstart_at < ttend) & (ttend_at > ttstart))
+      end
+    end
+
     # Generate arel expression that evaluates to true if the period specified by
     # _start_column_ and _end_column_ intersects with the instant or period. All
     # periods are considered half-open: [closed, open).
