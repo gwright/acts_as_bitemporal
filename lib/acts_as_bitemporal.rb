@@ -680,6 +680,7 @@ class << ActiveRecord::Base
     before_validation :bt_ensure_timestamps
     validate          :bt_scope_constraint
     after_commit      :bt_after_commit
+
   end
 
   def has_many_bitemporal(collection, options={})
@@ -695,10 +696,11 @@ class << ActiveRecord::Base
 
     info = bt_attributes[collection.to_sym] = {
       :type => :collection,
-      :class_name => collection.classify,
+      :class_name => options.delete(:class_name) || collection.classify,
     }
 
-    has_many plural_sym, extend: ActsAsBitemporal::AssociationMethods
+    options = { extend: ActsAsBitemporal::AssociationMethods }.merge( class_name: info[:class_name] )
+    has_many plural_sym, options
 
     define_method("bt_#{collection}") do |*args|
       send(plural_sym).bt_intersect(*args)
@@ -719,11 +721,12 @@ class << ActiveRecord::Base
     singular_sym  = singular.to_sym
     plural_sym    = singular.pluralize.to_sym
     through = options.delete(:through)
+    class_name = options.delete(:class_name)
     assignments = through.to_s.pluralize.to_sym
 
     info = bt_attributes[singular_sym] = {
       :type => :scalar,
-      :class_name => singular.classify,
+      :class_name => class_name || singular.classify,
       :through => through,
       :expose => options.delete(:expose) || [],
       :through_class_name => through.to_s.classify,
@@ -746,8 +749,9 @@ class << ActiveRecord::Base
     else
 
       attr_list = info[:expose]
+      options = { extend: ActsAsBitemporal::AssociationMethods }.merge( class_name: info[:class_name] )
 
-      has_many plural_sym,  extend: ActsAsBitemporal::AssociationMethods
+      has_many plural_sym, options
 
       after_method = "bt_after_create_#{singular}"
       after_create after_method.to_sym
