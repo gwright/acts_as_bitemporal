@@ -468,20 +468,43 @@ module ActsAsBitemporal
     #       # => selects records valid on Jan 1st but not known until after Feb 1 at midnight.
     #   bt_intersect(bt_record)     # => selects records valid and active while bt_record is also valid and active.
     def bt_intersect(*args)
+      where(arel_bt_intersect(*bt_temporal(*args)))
+    end
+
+    # Coerce temporal arguments into a 4-tuple: valid_start, valid_end, transaction_start, transaction_end
+    #   bt_temporal                           # => now, now, now, now
+    #   tt_temporal(t1)                       # => t1, t1, now, now
+    #   bt_temporal(t1, t2)                   # => t1, t1, t2, t2
+    #   bt_temporal(t1, t2, t3, t4)           # => t1, t2, t3, t4
+    #   bt_temporal(r1)                       # => r1.begin, r1.end, now, now
+    #   bt_temporal(t1, r2)                   # => t1, t1, r2.begin, r2.end
+    #   bt_temporal(r1, t2)                   # => r1.begin, r1.end, t2, t2
+    def bt_temporal(*args)
       case args.count
       when 0
-        bt_current
+        instant = Time.zone.now
+        bt_temporal(instant, instant)
       when 1
         case instant = args.first
         when ActsAsBitemporal
-          where(arel_bt_intersect( *args.first.bt_temporal_attributes.values ))
+          return instant.bt_temporal_attributes.values
         else
-          vt_intersect(instant).tt_intersect(instant)
+          return bt_temporal(instant, Time.zone.now)
         end
       when 2
-        vt_intersect(args.at(0)).tt_intersect(args.at(1))
+        return [*bt_temporal_limits(args.at(0)), *bt_temporal_limits(args.at(1))]
       when 4
-        where(arel_bt_intersect(*args))
+        return args
+      end
+    end
+
+    # Coerce an instance or a range into start and end points.
+    def bt_temporal_limits(instant_or_range)
+      case instant_or_range
+      when ::Range, ARange
+        return instant_or_range.begin, instant_or_range.end
+      else
+        return instant_or_range, instant_or_range
       end
     end
 
