@@ -21,7 +21,7 @@ class ActsAsBitemporalTestDatabase
   TestTable = 'bt_recs'
 
   def self.setup
-    db_driver = ENV['DB'] || 'sqlite3'
+    db_driver = ENV['DB'] || 'postgresql'
     ActiveRecord::Base.logger = ActiveSupport::BufferedLogger.new("log/#{db_driver}_test.log")
     ActiveRecord::Base.establish_connection YAML.load(File.open(File.join(File.dirname(__FILE__), 'database.yml')).read)[db_driver]
   end
