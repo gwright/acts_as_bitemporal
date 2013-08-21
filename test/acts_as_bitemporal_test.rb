@@ -167,7 +167,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
       first.vtend_at   = base_date + 4
 
       refute            first.save,               "save can't be used to update records"
-      assert_raises(ActiveRecord::RecordInvalid,  "save can't be used to update records") do
+      assert_raises(ActiveRecord::RecordNotSaved,  "save can't be used to update records") do
         first.save!
       end
 
