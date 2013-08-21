@@ -447,8 +447,8 @@ module ActsAsBitemporal
     def sifter_bt_constraint(vtstart, vtend, ttstart, ttend)
       squeel do
         (ttstart_at == nil) |
-        ((vtstart_at < vtend) & (vtend_at > vtstart) &
-        (ttstart_at < ttend) & (ttend_at > ttstart))
+          ((vtstart_at < vtend) & (vtend_at > vtstart) &
+           (ttstart_at < ttend) & (ttend_at > ttstart))
       end
     end
 
