@@ -380,14 +380,24 @@ module ActsAsBitemporal
   # The new record can not have a valid time period that overlaps
   # with any existing record for the same entity.
   def bt_scope_constraint
-    if !new_record? and !bt_safe?
-      errors[:base] << "invalid use of save on temporal records"
-    elsif bt_scope_constraint_violation?
+    if bt_scope_constraint_violation?
       if $DEBUG
         errors[:base] << "overlaps existing valid record: #{bt_versions.vt_intersect(vtstart_at, vtend_at).tt_intersect(ttstart_at).to_a.inspect}"
       else
         errors[:base] << "overlaps existing valid record"
       end
+      false
+    else
+      true
+    end
+  end
+
+  def bt_guard_save
+    if !new_record? and !bt_safe?
+      errors[:base] << "invalid use of save on temporal records"
+      false
+    else
+      true
     end
   end
 
@@ -712,6 +722,7 @@ class << ActiveRecord::Base
 
     before_validation :bt_ensure_timestamps
     validate          :bt_scope_constraint
+    before_save       :bt_guard_save
     after_commit      :bt_after_commit
 
   end
@@ -794,7 +805,7 @@ class << ActiveRecord::Base
         if !attr_list.empty?
           attributes = Hash[ attr_list.map { |a| [a, send("bta_#{singular_sym}_#{a}")] } ]
           # things         << (thing              ||        Thing.new( :thing_attr0 => bta_thing_attr0, :thing_attr1 => bta_thing_attr1)
-          send(plural_sym) << (send(singular_sym) || info[:class].new(attributes))
+          raise ActiveRecord::Rollback unless send(plural_sym).push((send(singular_sym) || info[:class].new(attributes)))
         end
       end
 
