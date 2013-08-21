@@ -549,9 +549,6 @@ MAP
 
       thirds = bt_model.where(name: 'third')
       assert_equal 3, thirds.size
-      thirds.each { |r|
-        warn "#{r.id} #{r.vtstart_at} #{r.vtend_at} #{r.name}"
-      }
 
       assert thirds.where(vtstart_at: first_start, vtend_at: first_end).exists?
       assert thirds.where(vtstart_at: first_start, vtend_at: start2).exists?
