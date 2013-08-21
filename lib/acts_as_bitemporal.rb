@@ -4,6 +4,39 @@ require "acts_as_bitemporal/range"
 require 'active_support/time'
 require 'active_record'
 
+# ActsAsBitemporal provides a framework for recording multiple versions
+# of an Active Record model. The module is appropriate for tracking
+# information that changes over time while maintaining a history of all
+# the changes.
+#
+# The framework expects the model to be
+# composed of the following attributes:
+#
+# id:                   the active record unique identifier
+# scope attributes:     one or more attributes that uniquely identify a
+#                       model instance.
+# temporal attributes:  four timestamp columns that define the temporal
+#                       scope of the model instance.
+# value attributes:     attributes that define the values that characterize
+#                       each version of the record.
+#
+# A bitemporal model describes an entity with attributes that change
+# over time. The scope attributes form a composite key that identifies
+# that identifies the entity. The id column provides a unique key to
+# identify a particular version of an entity and the temporal columns
+# define the temporal scope of the version.
+#
+# The temporal scope of a version is defined by two timestamp ranges,
+# valid time, and transaction time.  The transaction time range specifies
+# when the record was added to the database and when the record was logically
+# removed from the database. In normal operation, records are never physically
+# deleted from the database. The valid time range specifies time period during
+# which the value attributes are to be associated with the entity.
+# Changes to an entity's attributes over time are represented as a
+# succession of records all with the same scope attributes but with different
+# valid time ranges and different value attributes.
+#
+#
 module ActsAsBitemporal
   extend ActiveSupport::Concern  # XXX probably not needed
 
@@ -44,7 +77,7 @@ module ActsAsBitemporal
     "id: #{id}, vt:#{vt_range.inspect}, tt:#{tt_range.inspect}, scope: #{attributes.slice(*self.class.bt_scope_columns).map { |k,v| "#{k}: #{v}"}.join(' ')}"
   end
 
-  # Returns versions of this record that have a bitemporal scope that intersects
+  # Returns versions of this record with bitemporal scope that intersects
   # with the specified bitemporal scope.
   #
   #    bt_history                     # => returns all versions of this record that are active
