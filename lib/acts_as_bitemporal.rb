@@ -721,7 +721,7 @@ class << ActiveRecord::Base
     attr_accessor :bt_safe
 
     before_validation :bt_ensure_timestamps
-    validate          :bt_scope_constraint
+    validate          :bt_scope_constraint, :on => :create
     before_save       :bt_guard_save
     after_commit      :bt_after_commit
 
