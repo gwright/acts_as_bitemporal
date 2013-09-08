@@ -83,7 +83,7 @@ module ActsAsBitemporal
   #    bt_history                     # => returns all versions of this record that are active
   #    bt_history(Time.zone.now)      # => returns all versions of this record that are active and valid now
   #
-  #    bt_history(Time.zone.now, Time.zone.now + 30.days)
+  #    bt_history(Time.zone.now...(Time.zone.now + 30.days))
   #      # => returns all versions of this record that are active and valid within the next 30 days
   #
   #    bt_history((Time.zone.now...Time.zone.now + 30.days), "2011-01-01")
@@ -298,7 +298,7 @@ module ActsAsBitemporal
   # XXX Should detect fragmented period and coalece in revision.
   #
   # When the proposed revision has a vt range that overlaps one or more existing
-  # records those records are also finalized and revised but their own vt periods
+  # records, those records are also finalized and revised but their own vt periods
   # are retained. bt_revise preserves the existing valid time periods -- it will
   # not create a new record with a valid time range that covers a previously
   # invalid time.
@@ -338,12 +338,12 @@ module ActsAsBitemporal
     attributes.slice(*self.class.bt_versioned_columns)
   end
 
-  # Returns attribute hash excluding the four temporal attributes.
+  # Returns attribute hash excluding the primary key and the four temporal attributes.
   def bt_value_attributes
     attributes.slice(*(self.class.bt_scope_columns + self.class.bt_versioned_columns))
   end
 
-  # Returns attribute hash including excluding the primary keys.
+  # Returns attribute hash excluding the primary key and the transaction time attributes.
   def bt_snapshot_attributes
     attributes.tap { |a| a.delete('id'); a.delete('ttstart_at'); a.delete('ttend_at') }
   end
