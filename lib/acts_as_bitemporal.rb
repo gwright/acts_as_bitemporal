@@ -586,6 +586,15 @@ module ActsAsBitemporal
       where(:ttend_at => InfinityLiteral)
     end
 
+    def vt_historical(table=nil)
+      if table
+        column = ActiveRecord::Base.connection.quote_column_name(table) + ".vtend_at"
+      else
+        column = "vtend_at"
+      end
+      where(sprintf('%s <= current_timestamp', column))
+    end
+
     Tokens = ('A'..'Z').to_a.join
     def bt_ascii(detail=false)
       final = ""
@@ -725,7 +734,7 @@ class << ActiveRecord::Base
     attr_accessor :bt_safe
 
     before_validation :bt_ensure_timestamps
-    validate          :bt_scope_constraint, :on => :create
+    before_create     :bt_scope_constraint
     before_save       :bt_guard_save
     after_commit      :bt_after_commit
 
