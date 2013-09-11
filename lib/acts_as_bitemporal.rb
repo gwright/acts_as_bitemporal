@@ -72,6 +72,7 @@ module ActsAsBitemporal
 
   # A Range that represents all time.
   AllTime         = ARange[Ninfinity, Infinity]
+  AllTimeDB       = ARange[NinfinityValue, InfinityValue]
 
   def inspect
     "id: #{id}, vt:#{vt_range.inspect}, tt:#{tt_range.inspect}, scope: #{attributes.slice(*self.class.bt_scope_columns).map { |k,v| "#{k}: #{v}"}.join(' ')}"
@@ -516,6 +517,7 @@ module ActsAsBitemporal
 
     # Coerce temporal arguments into a 4-tuple: valid_start, valid_end, transaction_start, transaction_end
     #   bt_temporal                           # => now, now, now, now
+    #   bt_temporal(nil)                      # => min, max, min, max
     #   tt_temporal(t1)                       # => t1, t1, now, now
     #   bt_temporal(t1, t2)                   # => t1, t1, t2, t2
     #   bt_temporal(t1, t2, t3, t4)           # => t1, t2, t3, t4
@@ -529,15 +531,17 @@ module ActsAsBitemporal
         bt_temporal(instant, instant)
       when 1
         case instant = args.first
+        when NilClass
+          bt_temporal(ActsAsBitemporal::NinfinityLiteral, ActsAsBitemporal::InfinityLiteral, ActsAsBitemporal::NinfinityLiteral, ActsAsBitemporal::InfinityLiteral)
         when ActsAsBitemporal
-          return instant.bt_temporal_attributes.values
+          instant.bt_temporal_attributes.values
         else
-          return bt_temporal(instant, Time.zone.now)
+          bt_temporal(instant, Time.zone.now)
         end
       when 2
-        return [*bt_temporal_limits(args.at(0)), *bt_temporal_limits(args.at(1))]
+        [*bt_temporal_limits(args.first), *bt_temporal_limits(args.last)]
       when 4
-        return args
+        args
       end
     end
 
