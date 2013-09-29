@@ -302,7 +302,7 @@ module ActsAsBitemporal
   # records, those records are also finalized and revised but their own vt periods
   # are retained. bt_revise preserves the existing valid time periods -- it will
   # not create a new record with a valid time range that covers a previously
-  # invalid time.
+  # invalid time. XXX is this correct?
   def bt_revise(attrs={})
     raise ArgumentError, "invalid revision of non-current record" if inactive?
 
@@ -442,7 +442,7 @@ module ActsAsBitemporal
   module ClassMethods
 
     def bt_nonkey_columns
-      bt_versioned_columns + TemporalColumnNames
+      bt_versioned_columns + TemporalColumnNames + bt_virtual_columns
     end
 
     def sifter_bt_constraint(vtstart, vtend, ttstart, ttend)
@@ -688,6 +688,7 @@ class << ActiveRecord::Base
   # bt_value_columns        # the columns considered when versioning the model
   # bt_scope_columns        # the columns that uniquely identify the model scope
   # bt_versioned_columns    # the value columns with bt_scope_columns excluded
+  # bt_virtual_columns      # the declared virtual columns, used by bt_attributes=
   #
   # The 'id' and 'type' columns are ignored by acts_as_bitemporal.
   #
@@ -717,6 +718,7 @@ class << ActiveRecord::Base
     class_attribute :bt_scope_columns
     class_attribute :bt_versioned_columns
     class_attribute :bt_value_columns
+    class_attribute :bt_virtual_columns
 
     if bt_belongs_to = options.delete(:for)
       self.bt_scope_columns = [bt_belongs_to.to_s.foreign_key] # Entity => entity_id
@@ -726,6 +728,12 @@ class << ActiveRecord::Base
       self.bt_scope_columns = Array(bt_scope_columns).map(&:to_s)
     else
       self.bt_scope_columns = self.column_names.grep /_id\z/
+    end
+
+    if self.bt_virtual_columns = options.delete(:virtual)
+      self.bt_virtual_columns = Array(bt_virtual_columns).map(&:to_s)
+    else
+      self.bt_virtual_columns = []
     end
 
     self.bt_value_columns = self.column_names - ActsAsBitemporal::TemporalColumnNames - bt_exclude_columns
