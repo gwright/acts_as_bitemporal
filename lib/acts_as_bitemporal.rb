@@ -244,7 +244,7 @@ module ActsAsBitemporal
   # If no block is given, returns array of records that were finalized.
   #
   # If a block is given, the block is called once for each record that
-  # is finalized and the return values from these calls is returned as an array.
+  # is finalized and the return values from these calls are returned as an array.
   # The block is passed the finalized record, the valid time range that
   # is being finalized and the commit time for the transaction.
   #
@@ -285,24 +285,33 @@ module ActsAsBitemporal
   # failed because the record had already been finalized.
   def bt_finalize(commit_time=Time.zone.now)
     if !changed? and active?
-      not self.class.where(id: id, ttend_at: InfinityLiteral).update_all(ttend_at: commit_time).zero?
+      finalized = !self.class.where(id: id, ttend_at: InfinityLiteral).update_all(ttend_at: commit_time).zero?
+      self.ttend_at = commit_time if finalized
+      finalized
     else
       raise ArgumentError, "invalid finalization of modified or finalized record"
     end
   end
 
-  # Revise this record by finalizing the current version and saving the new version.
-  # An array of new records are returned. When only non-temporal attributes are
-  # revised, the array will contain just a single record.
+  # Revise the existing timeline for this entity. The attributes passed as an
+  # argument are merged with the existing record to define the revision
+  # including the applicable vt range. The revised timeline is constructed by
+  # obsoleting the portion of any snapshots within the applicable vt range with
+  # new snapshots defined by the revision.
+  #
+  # An array of new snapshots are returned. When only non-temporal attributes are
+  # revised, the array will contain just the single new snapshot.
   #
   #     bt_revise(attr1: 'new value')
-  # XXX Should detect fragmented period and coalece in revision.
+  #     bt_revise(attr2: 'new value', vtstart_at: start_of_range)
+  #     bt_revise(attr3: 'new value', vtstart_at: start_of_range, vtend_at: end_of_range)
   #
-  # When the proposed revision has a vt range that overlaps one or more existing
-  # records, those records are also finalized and revised but their own vt periods
-  # are retained. bt_revise preserves the existing valid time periods -- it will
-  # not create a new record with a valid time range that covers a previously
-  # invalid time. XXX is this correct?
+  # bt_revise preserves the existing valid time periods in the timeline. It
+  # will not create a new snapshot with a valid time range that covers a
+  # previously invalid time. This is unlike #bt_force, which forces the creation
+  # of a snapshot that spans the entire vt range.
+  #
+  # XXX Should detect fragmented period and coalece in revision.
   def bt_revise(attrs={})
     raise ArgumentError, "invalid revision of non-current record" if inactive?
 
@@ -409,9 +418,9 @@ module ActsAsBitemporal
   # Coerce arguments to a standard format for a slice of valid time records
   # represented by a valid time range and a transaction time instant.
   #
-  #   bt_coerce_slice                      # [vt_current, now]
+  #   bt_coerce_slice                      # [vt_range, now]
   #   bt_coerce_slice(vt_range)            # [vt_range, now]
-  #   bt_coerce_slice(vt_range, tt_range)  # [vt_range, tt_range]
+  #   bt_coerce_slice(vt_range, time)      # [vt_range, time]
   #   bt_coerce_slice(start, end)          # [start...end, now]
   #   bt_coerce_slice(start, end, time)    # [start...end, time]
   def bt_coerce_slice(*args)
