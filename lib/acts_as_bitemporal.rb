@@ -333,6 +333,40 @@ module ActsAsBitemporal
     result
   end
 
+  # Revise the existing timeline for this entity. The attributes passed as an
+  # argument are merged with the existing record to define the revision
+  # including the applicable vt range. The revised timeline is constructed by
+  # obsoleting the portion of any snapshots within the applicable vt range and
+  # entering a new snapshots spanning the entire vt range.
+  #
+  # An array of new snapshots are returned. When only non-temporal attributes are
+  # revised, the array will contain just the single new snapshot.
+  #
+  #     bt_force(attr1: 'new value')
+  #     bt_force(attr2: 'new value', vtstart_at: start_of_range)
+  #     bt_force(attr3: 'new value', vtstart_at: start_of_range, vtend_at: end_of_range)
+  #
+  # bt_force does not preserve the existing valid time periods in the timeline.
+  # It will create a new snapshot with a valid time range that covers the
+  # entire range.  This is unlike #bt_revise, which will preserve any existing
+  # gaps in the timeline.
+  #
+  # XXX Should detect fragmented period and coalece in revision.
+  def bt_force(attrs)
+    raise ArgumentError, "invalid revision of non-current record" if inactive?
+
+    revision = bt_new_version(attrs)
+
+    return [] if !changed? and revision.bt_same_snapshot?(self)
+
+    result = bt_delete(revision.vtstart_at, revision.vtend_at)
+    revision.bt_commit( result.last.try(:ttend_at) )
+
+    result << revision
+
+    result
+  end
+
   # Returns hash of the four temporal attributes.
   def bt_temporal_attributes
     attributes.slice(*TemporalColumnNames)
