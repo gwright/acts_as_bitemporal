@@ -490,7 +490,15 @@ module ActsAsBitemporal
       bt_versioned_columns + TemporalColumnNames + bt_virtual_columns
     end
 
-    def sifter_bt_constraint(vtstart, vtend, ttstart, ttend)
+    # Generate bitemporal constraint conditions. Use in
+    # a where{} clause with sift:
+    #
+    #   where { sift :bt_constraint, *temporal }
+    #
+    # The temporal arguments are passed to #bt_temporal to be expanded
+    # into valid time and transacation time start and end timestamps.
+    def sifter_bt_constraint(*temporal)
+      vtstart, vtend, ttstart, ttend = bt_temporal(*temporal)
       squeel do
         (ttstart_at == nil) |
           ((vtstart_at < vtend) & (vtend_at > vtstart) &
@@ -526,8 +534,40 @@ module ActsAsBitemporal
     end
 
     # Generate arel expression for intersection with valid and transaction time periods.
-    def arel_bt_intersect(*args)
-      arel_vt_intersect(args.at(0), args.at(1)).and(arel_tt_intersect(args.at(2), args.at(3)))
+    def arel_bt_intersect(*bt_tuple)
+      arel_vt_intersect(bt_tuple.at(0), bt_tuple.at(1)).and(arel_tt_intersect(bt_tuple.at(2), bt_tuple.at(3)))
+    end
+
+    # Generate arel expression that evaluates to true if the period specified by
+    # _start_column_ and _end_column_ does not intersect with the instant or period. All
+    # periods are considered half-open: [closed, open).
+    #   arel_exclude(:vtstart_at, :vtend_at, Time.zone.now)
+    #   arel_exclude(:ttstart_at, :ttend_at, Time.zone.parse("2014-01-01"), Time.zone.parse("2015-01-01"))
+    def arel_exclude(start_column, end_column, start_or_instant_or_range=nil, range_end=nil)
+      table = self.arel_table
+      if range_end
+        table[start_column].gteq(range_end).or(table[end_column].lteq(start_or_instant_or_range))
+      elsif Range === start_or_instant_or_range
+        table[start_column].gteq(start_or_instant_or_range.db_end).or(table[end_column].lteq(start_or_instant_or_range.db_begin))
+      else
+        start_or_instant_or_range ||= InfinityLiteral
+        table[start_column].gt(start_or_instant_or_range).or(table[end_column].lteq(start_or_instant_or_range))
+      end
+    end
+
+    # Generate arel expression for exclusion with valid time period.
+    def arel_vt_exclude(instant, range_end)
+      arel_exclude(:vtstart_at, :vtend_at, instant, range_end)
+    end
+
+    # Generate arel expression for exclusion with transaction time period.
+    def arel_tt_exclude(instant, range_end)
+      arel_exclude(:ttstart_at, :ttend_at, instant, range_end)
+    end
+
+    # Generate arel expression for exclusion with valid and transaction time periods.
+    def arel_bt_exclude(*args)
+      arel_vt_exclude(args.at(0), args.at(1)).and(arel_tt_exclude(args.at(2), args.at(3)))
     end
 
     # AR relation where condition for valid time intersection. Selects all record
@@ -561,14 +601,14 @@ module ActsAsBitemporal
     end
 
     # Coerce temporal arguments into a 4-tuple: valid_start, valid_end, transaction_start, transaction_end
-    #   bt_temporal                           # => now, now, now, now
-    #   bt_temporal(nil)                      # => min, max, min, max
-    #   tt_temporal(t1)                       # => t1, t1, now, now
-    #   bt_temporal(t1, t2)                   # => t1, t1, t2, t2
-    #   bt_temporal(t1, t2, t3, t4)           # => t1, t2, t3, t4
-    #   bt_temporal(r1)                       # => r1.begin, r1.end, now, now
-    #   bt_temporal(t1, r2)                   # => t1, t1, r2.begin, r2.end
-    #   bt_temporal(r1, t2)                   # => r1.begin, r1.end, t2, t2
+    #   bt_temporal(nil)                      # => min, max, min, max               all
+    #   bt_temporal                           # => now, now, now, now               snapshot[now,now]
+    #   tt_temporal(t1)                       # => t1, t1, now, now                 snapshot[t1,now]
+    #   bt_temporal(t1, t2)                   # => t1, t1, t2, t2                   snapshot[t1,t2]
+    #   bt_temporal(t1, t2, t3, t4)           # => t1, t2, t3, t4                   bitemporal[t1..t2, t3..t4]
+    #   bt_temporal(t1, r2)                   # => t1, t1, r2.begin, r2.end         rollback[tr2] @ t1
+    #   bt_temporal(r1)                       # => r1.begin, r1.end, now, now       history[vr1] @ now
+    #   bt_temporal(r1, t2)                   # => r1.begin, r1.end, t2, t2         history[vr1] @ t2
     def bt_temporal(*args)
       case args.count
       when 0
