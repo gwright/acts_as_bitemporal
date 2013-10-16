@@ -3,10 +3,27 @@ module ActsAsBitemporal
   class Range #< ::Range
 
     # Covenience method for creating instances.
-    #   ActsAsBitemporal::Range[1,4]      # => [1,4)
-    #   ActsAsBitemporal::Range.new(1,4)  # => [1,4)
-    def self.[](start_instant, end_instant)
-      new(start_instant, end_instant)
+    #   ActsAsBitemporal::Range[]           # => [now = Time.zone.now, now)
+    #   ActsAsBitemporal::Range[time_ish]   # => [timeish, timeish)
+    #   ActsAsBitemporal::Range[range_ish]  # => [rangeish.start, rangeish.end)
+    #   ActsAsBitemporal::Range[start, end] # => [start, end)
+    def self.[](*args)
+      case args.size
+      when 0
+        args.push(now = Time.zone.now, now)
+      when 1
+        if (self === args.first) or (::Range === args.first)
+          args = [args.first.begin, args.first.end]
+        else
+          args.push(args.first)
+        end
+      when 2
+        #nothing
+     else
+       raise ArgumentError
+     end
+
+     new(*args)
     end
     #     begin, end, first, last,
     #     ==, eql?, hash, ===, 
@@ -16,7 +33,7 @@ module ActsAsBitemporal
 
     attr :begin, :end
     # All ranges are [closed, open)
-    def initialize(min, max)
+    def initialize(min, max=min)
       @begin, @end = coerce(min), coerce(max)
     end
 
