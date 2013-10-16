@@ -1,6 +1,6 @@
 # ActsAsBitemporal
 
-TODO: Write a gem description
+Adds bi-temporal support to ActiveRecord models.
 
 ## Installation
 
@@ -17,8 +17,6 @@ Or install it yourself as:
     $ gem install acts_as_bitemporal
 
 ## Usage
-
-TODO: Write usage instructions here
 
 ## Contributing
 
