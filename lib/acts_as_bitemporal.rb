@@ -103,6 +103,7 @@ module ActsAsBitemporal
   def bt_versions
     self.class.where(bt_scope_conditions)
   end
+  alias bt_snapshots bt_versions
 
   # Returns valid time period represented as an ActsAsBitemporal::Range.
   def vt_range
