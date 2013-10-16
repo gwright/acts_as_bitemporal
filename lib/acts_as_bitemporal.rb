@@ -883,11 +883,13 @@ class << ActiveRecord::Base
     plural_sym    = singular.pluralize.to_sym
     through = options.delete(:through)
     class_name = options.delete(:class_name)
+    foreign_key = options.delete(:foreign_key)
     assignments = through.to_s.pluralize.to_sym
 
     info = bt_attributes[singular_sym] = {
       :type => :scalar,
       :class_name => class_name || singular.classify,
+      :foreign_key => foreign_key,
       :through => through,
       :expose => options.delete(:expose) || [],
       :through_class_name => through.to_s.classify,
@@ -911,6 +913,7 @@ class << ActiveRecord::Base
 
       attr_list = info[:expose]
       options = { extend: ActsAsBitemporal::AssociationMethods }.merge( class_name: info[:class_name] )
+      options.merge!(foreign_key: info[:foreign_key]) if info.has_key?(:foreign_key)
 
       has_many plural_sym, options
 
