@@ -72,7 +72,7 @@ module ActsAsBitemporal
 
   # A Range that represents all time.
   AllTime         = ARange[Ninfinity, Infinity]
-  AllTimeDB       = ARange[NinfinityValue, InfinityValue]
+  AllTimeDB       = ARange[NinfinityLiteral, InfinityLiteral]
 
   def inspect
     "id: #{id}, vt:#{vt_range.inspect}, tt:#{tt_range.inspect}, scope: #{attributes.slice(*self.class.bt_scope_columns).map { |k,v| "#{k}: #{v}"}.join(' ')}"
