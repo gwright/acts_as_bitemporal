@@ -46,7 +46,7 @@ module ActsAsBitemporal
   # Alias to clarify we aren't using Ruby's Range
   ARange = ActsAsBitemporal::Range
 
-  adapter_name = (ENV['DB'] || ActiveRecord::Base.connection.adapter_name) rescue 'postgresql'
+  adapter_name = (ENV['DB'] || 'postgresql')
 
   if adapter_name =~/postgres/i
     # The timestamp used to signify an indefinite end of a time period.
