@@ -352,15 +352,17 @@ module ActsAsBitemporal
   # gaps in the timeline.
   #
   # XXX Should detect fragmented period and coalece in revision.
-  def bt_force(attrs)
+  def bt_force(attrs={})
     raise ArgumentError, "invalid revision of non-current record" if inactive?
 
     revision = bt_new_version(attrs)
 
     return [] if !changed? and revision.bt_same_snapshot?(self)
 
-    result = bt_delete(revision.vtstart_at, revision.vtend_at)
-    revision.bt_commit( result.last.try(:ttend_at) )
+    ActiveRecord::Base.transaction do
+      result = bt_delete(revision.vtstart_at, revision.vtend_at)
+      revision.bt_commit( result.last.try(:ttend_at) )
+    end
 
     result << revision
 
