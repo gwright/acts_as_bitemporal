@@ -585,6 +585,15 @@ module ActsAsBitemporal
       where(arel_vt_intersect(instant, range_end))
     end
 
+    # AR relation where condition for valid time exclusion. Selects all record
+    # that have a valid period that does not intersect the instant or period provided.
+    #   vt_exclude                # => selects records not valid now.
+    #   vt_exclude("2013-01-01")  # => selects records not valid on January 1, 2013 at 00:00:00.
+    #   vt_exclude("2013-01-01", "2013-01-02")  # => selects records not valid between January 1, 2013 00:00:00 and 24:00:00.
+    def vt_exclude(instant=Time.zone.now, range_end=nil)
+      where(arel_vt_exclude(instant, range_end))
+    end
+
     # AR relation where condition for transaction time intersection. Selects all record
     # that have a transaction period that intersects the instant or period provided.
     #   tt_intersect                # => selects records active now.
