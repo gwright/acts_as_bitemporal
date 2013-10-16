@@ -727,6 +727,7 @@ module ActsAsBitemporal
       final
     end
 
+    # XXX obsolete/unused
     # Verify bitemporal key constraints
     def bt_scope_constraint_table
       n = Name.arel_table
@@ -804,11 +805,6 @@ class << ActiveRecord::Base
   # The table definition helper, bt_timestamps, is provided to easily add
   # these timestamps.
   #
-  # include ActsAsBitemporal instance methods
-  # define scope
-  #     default (_id)
-  #     for
-  #     scope
   def acts_as_bitemporal(*args)
     options = args.extract_options!
     bt_exclude_columns = %w{id type}    # AR maintains these columns
