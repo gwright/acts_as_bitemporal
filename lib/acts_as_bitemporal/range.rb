@@ -263,5 +263,9 @@ module ActsAsBitemporal
         value.strftime("%F")
       end
     end
+
+    def to_a
+      [self.begin, self.end]
+    end
   end
 end
