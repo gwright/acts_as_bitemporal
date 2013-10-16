@@ -1,6 +1,7 @@
 # encoding: utf-8
 require "acts_as_bitemporal/version"
 require "acts_as_bitemporal/range"
+require "acts_as_bitemporal/zone"
 require 'active_support/time'
 require 'active_record'
 
@@ -111,6 +112,11 @@ module ActsAsBitemporal
   # Returns transaction time period represented as an ActsAsBitemporal::Range.
   def tt_range
     ARange.new(ttstart_at, ttend_at)
+  end
+
+  # Returns bitemporal time zone as an ActsAsBitemporal::Zone.
+  def bt_zone
+    Zone.new(vt_range, tt_range)
   end
 
   # Returns true if the transaction period intersects with the instant
