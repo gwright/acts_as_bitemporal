@@ -72,7 +72,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
 
   def test_current_time_create_with_current_time_conflict
     with_one_record do |bt_model|
-      assert_raises(ActiveRecord::RecordInvalid) do
+      assert_raises(ActiveRecord::RecordNotSaved) do
         bt_model.create!(entity_attributes(name: "two"))
       end
     end
@@ -80,7 +80,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
 
   def test_current_time_new_then_save_with_current_time_conflict
     with_one_record do |bt_model|
-      assert_raises(ActiveRecord::RecordInvalid) do
+      assert_raises(ActiveRecord::RecordNotSaved) do
         record = bt_model.new(entity_attributes(name: "two"))
         record.save!
       end
@@ -120,7 +120,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     empty_database do |bt_model|
       instance = bt_model.create!(entity_attributes(vtstart_at: base_date, vtend_at: base_date + 1))
 
-      assert_raises(ActiveRecord::RecordInvalid) {
+      assert_raises(ActiveRecord::RecordNotSaved) {
         # Attempt to create a valid period conflict for the defined scope.
         bt_model.create!(entity_attributes(name: "two", vtstart_at: base_date, vtend_at: base_date + 1) )
       }
@@ -140,7 +140,7 @@ class ActsAsBitemporalTest < ActiveSupport::TestCase
     empty_database do |bt_model|
       instance = bt_model.create!(entity_attributes(vtstart_at: base_date, vtend_at: base_date + 1))
 
-      assert_raises(ActiveRecord::RecordInvalid) {
+      assert_raises(ActiveRecord::RecordNotSaved) {
         # Attempt to create a valid period conflict for the defined scope.
         record = bt_model.new(entity_attributes(name: "two", vtstart_at: base_date, vtend_at: base_date + 1) )
         record.save!
